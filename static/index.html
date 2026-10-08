@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MindForm World — Living Simulation</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script type="importmap">
+    {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}
+  </script>
+</head>
+<body>
+  <main class="app">
+    <div id="world-container"><canvas id="world"></canvas><div class="corner-note">DRAG TO ORBIT · SCROLL TO ZOOM · CLICK AN AGENT</div></div>
+    <header class="topbar">
+      <div class="brand"><div class="brand-icon">✳</div><div><div class="brand-name">MIND<span>FORM</span> <em>WORLD</em></div><div class="brand-subtitle">Personality-driven agent simulation</div></div></div>
+      <div class="status"><span class="online-dot"></span><span>SIMULATION ONLINE</span><span class="divider">/</span><span id="mode">DETERMINISTIC v0.1</span></div>
+      <div class="top-actions"><a href="https://mindform-ai.com" target="_blank" rel="noopener noreferrer">MIND FORM ↗</a></div>
+    </header>
+    <section class="left-panel panel">
+      <div class="panel-header"><span>WORLD OVERVIEW</span><span class="small-dot">●</span></div>
+      <div class="big-number" id="tick">0000</div><div class="metric-label">SIMULATION TICKS</div>
+      <div class="metrics"><div><strong id="agent-count">05</strong><small>ACTIVE AGENTS</small></div><div><strong id="visit-count">00</strong><small>LOCATION VISITS</small></div></div>
+      <div class="section-header">RESIDENTS <span id="resident-count">05 ONLINE</span></div>
+      <div id="agent-list" class="agent-list"></div>
+      <div class="section-header">EXPERIMENT STATUS <span>ALPHA</span></div>
+      <div class="info-card"><b>Personality Lab</b><p>Observe decisions, movement and social interaction. Model-powered reasoning is the next integration.</p></div>
+    </section>
+    <section class="right-panel panel">
+      <div class="panel-header"><span>AGENT INSPECTOR</span><span>↗</span></div>
+      <div id="inspector"><div class="placeholder"><div class="placeholder-icon">◇</div><b>Select an agent</b><p>Click a character in the world or the residents list to inspect their personality and memory.</p></div></div>
+      <div class="section-header feed-title">LIVE ACTIVITY <span id="event-count">0 EVENTS</span></div>
+      <div class="event-list" id="events"></div>
+    </section>
+    <footer class="controls"><div class="control-label">WORLD CONTROL <span id="run-state">RUNNING</span></div><button id="toggle" class="control primary">Ⅱ Pause</button><button id="step" class="control">+1 tick</button><button id="speed" class="control">1× SPEED</button><button id="reset" class="control danger">↺ Reset</button><div class="control-tip">WEBGL · REAL-TIME INTERPOLATION</div></footer>
+    <div id="error" class="error hidden"></div>
+  </main>
+  <script type="module" src="/static/world.js"></script>
+</body>
+</html>
