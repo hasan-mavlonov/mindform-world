@@ -44,3 +44,35 @@ def test_world_runs_on_v0(tmp_path):
         assert all(r["state"]["traits"] for r in rows)
     finally:
         manager.shutdown()
+
+
+def test_v0_ignores_proxy_settings(tmp_path, monkeypatch):
+    """A proxy/VPN app on the Mac answered the world's 127.0.0.1 calls with 502 Bad Gateway, so
+    v0 'never started'. The local connection must bypass HTTP(S)_PROXY entirely."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class BadGateway(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(502)
+            self.end_headers()
+        do_POST = do_CONNECT = do_GET
+
+        def log_message(self, *args):
+            pass
+
+    proxy = ThreadingHTTPServer(("127.0.0.1", 0), BadGateway)
+    threading.Thread(target=proxy.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{proxy.server_address[1]}"
+    for var in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(var, url)
+    for var in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(var, raising=False)
+    mind = make_mind("mindform_v0", tmp_path / "minds", use_llm=False)
+    try:
+        mind.start()
+        created = mind.create({"mode": "manual", "identity": {"name": "Ines"}, "levels": {}})
+        assert created.ref == "Ines"
+    finally:
+        mind.stop()
+        proxy.shutdown()

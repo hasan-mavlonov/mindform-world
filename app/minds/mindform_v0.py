@@ -149,13 +149,17 @@ class MindFormV0:
             stdout=logfile, stderr=subprocess.STDOUT,
         )
         logfile.close()
-        self._client = httpx.Client(base_url=self.base_url, timeout=_TURN_TIMEOUT)
+        # Local process: never route it through HTTP(S)_PROXY / a system proxy (a VPN or proxy app
+        # on the Mac otherwise answers 127.0.0.1 with 502 Bad Gateway and v0 never seems to start).
+        self._client = httpx.Client(base_url=self.base_url, timeout=_TURN_TIMEOUT, trust_env=False)
         deadline = time.monotonic() + _STARTUP_TIMEOUT
+        status = None
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
                 raise MindError("MindForm v0 exited on startup:\n" + self._log_tail())
             try:
-                if self._client.get("/api/config", timeout=2.0).status_code == 200:
+                status = self._client.get("/api/config", timeout=2.0).status_code
+                if status == 200:
                     log.info("MindForm v0 (%s) up at %s for %s",
                              "LLM" if self.use_llm else "offline", self.base_url, self.workdir)
                     return
@@ -163,7 +167,8 @@ class MindFormV0:
                 pass
             time.sleep(0.25)
         self.stop()
-        raise MindError("MindForm v0 did not start in time:\n" + self._log_tail())
+        answer = f" (it kept answering HTTP {status})" if status else ""
+        raise MindError(f"MindForm v0 did not start in time{answer}:\n" + self._log_tail())
 
     def stop(self) -> None:
         if self._client:
