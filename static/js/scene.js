@@ -7,6 +7,10 @@ const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = t => t * t * (3 - 2 * t);
+const lerpAngle = (a, b, t) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
+const TMP_COLOR = new THREE.Color();
+const TMP_VEC = new THREE.Vector3();
+const TMP_RIGHT = new THREE.Vector3();
 
 // Seeded random so the scenery is the same on every load.
 function rng(seed) {
@@ -63,6 +67,7 @@ export class IslandScene {
     this.bubbles = [];
     this.maxBubbles = 4;
     this.pops = [];
+    this.fx = [];                  // emotion emojis and particles, anchored to residents
     this.selected = null;
     this.camMode = 'orbit';
     this.lobby = false;
@@ -551,18 +556,60 @@ export class IslandScene {
     }
   }
 
+  _part(geo, material, x, y, z, parent) {     // small parts (faces, hands) cast no shadow
+    const m = new THREE.Mesh(geo, material);
+    m.position.set(x, y, z);
+    parent.add(m);
+    return m;
+  }
+
   _figure(r) {
     const g = new THREE.Group();
-    const suit = mat(r.color), dark = mat('#243a3a'), skin = mat('#f1d3bd');
-    const torso = this.mesh(new THREE.CapsuleGeometry(0.3, 0.45, 5, 10), suit, 0, 0.92, 0, g);
-    this.mesh(new THREE.SphereGeometry(0.28, 16, 10), skin, 0, 1.65, 0, g);
-    this.mesh(new THREE.SphereGeometry(0.295, 16, 8, 0, TAU, 0, Math.PI * 0.45), dark, 0, 1.69, 0, g);
-    for (const ex of [-0.1, 0.1]) this.mesh(new THREE.SphereGeometry(0.025, 7, 5), dark, ex, 1.66, 0.266, g);
-    const legL = this.mesh(new THREE.CapsuleGeometry(0.085, 0.27, 4, 6), dark, -0.13, 0.34, 0, g);
-    const legR = this.mesh(new THREE.CapsuleGeometry(0.085, 0.27, 4, 6), dark, 0.13, 0.34, 0, g);
-    const armL = this.mesh(new THREE.CapsuleGeometry(0.07, 0.29, 4, 7), suit, -0.38, 1.05, 0, g);
-    const armR = this.mesh(new THREE.CapsuleGeometry(0.07, 0.29, 4, 7), suit, 0.38, 1.05, 0, g);
-    armL.rotation.z = -0.18; armR.rotation.z = 0.18;
+    const suit = mat(r.color), dark = mat('#243a3a'), ink = mat('#1d2b2b');
+    // Each resident gets their own skin material: it flushes red with anger, pink with embarrassment.
+    const skin = new THREE.MeshStandardMaterial({ color: '#f1d3bd', roughness: 0.85 });
+    const body = new THREE.Group();                       // bounces, slumps, shakes
+    g.add(body);
+    const torso = this.mesh(new THREE.CapsuleGeometry(0.3, 0.45, 5, 10), suit, 0, 0.92, 0, body);
+    const legL = this.mesh(new THREE.CapsuleGeometry(0.085, 0.27, 4, 6), dark, -0.13, 0.34, 0, body);
+    const legR = this.mesh(new THREE.CapsuleGeometry(0.085, 0.27, 4, 6), dark, 0.13, 0.34, 0, body);
+    const arm = side => {                                 // pivots at the shoulder: arms can go up
+      const pivot = new THREE.Group();
+      pivot.position.set(0.37 * side, 1.25, 0);
+      body.add(pivot);
+      this.mesh(new THREE.CapsuleGeometry(0.07, 0.29, 4, 7), suit, 0, -0.2, 0, pivot);
+      this._part(new THREE.SphereGeometry(0.075, 8, 6), skin, 0, -0.43, 0, pivot);
+      return pivot;
+    };
+    const armL = arm(-1), armR = arm(1);
+    const head = new THREE.Group();                       // nods, droops, looks around
+    head.position.set(0, 1.42, 0);
+    body.add(head);
+    this.mesh(new THREE.SphereGeometry(0.28, 18, 12), skin, 0, 0.23, 0, head);
+    this.mesh(new THREE.SphereGeometry(0.295, 16, 8, 0, TAU, 0, Math.PI * 0.45), dark, 0, 0.27, 0, head);
+    for (const ex of [-0.1, 0.1]) this._part(new THREE.SphereGeometry(0.028, 8, 6), ink, ex, 0.25, 0.262, head);
+    const browL = this._part(new THREE.BoxGeometry(0.1, 0.022, 0.02), ink, -0.1, 0.33, 0.252, head);
+    const browR = this._part(new THREE.BoxGeometry(0.1, 0.022, 0.02), ink, 0.1, 0.33, 0.252, head);
+    const arcGeo = rad => new THREE.TorusGeometry(rad, 0.018, 6, 16, Math.PI);
+    const smile = this._part(arcGeo(0.075), ink, 0, 0.15, 0.268, head);
+    smile.rotation.set(-0.3, 0, Math.PI);
+    const frown = this._part(arcGeo(0.065), ink, 0, 0.08, 0.27, head);
+    frown.rotation.x = -0.3;
+    const open = this._part(new THREE.SphereGeometry(0.046, 10, 8), mat('#6b2b2b'), 0, 0.12, 0.256, head);
+    open.scale.set(1, 1.25, 0.5);
+    const flat = this._part(new THREE.BoxGeometry(0.1, 0.02, 0.02), ink, 0, 0.12, 0.272, head);
+    const blush = mat('#ff8fa6', { transparent: true, opacity: 0.8 });
+    const cheeks = [-1, 1].map(side => {
+      const c = this._part(new THREE.CircleGeometry(0.048, 12), blush, 0.15 * side, 0.18, 0.238, head);
+      c.rotation.y = 0.5 * side;
+      return c;
+    });
+    const cloud = new THREE.Group();                      // a little rain cloud for bad moments
+    for (const [x, y, s] of [[-0.2, 0, 0.2], [0.03, 0.07, 0.26], [0.24, 0, 0.19]]) this._part(new THREE.SphereGeometry(s, 10, 8), mat('#8d97a5'), x, y, 0, cloud);
+    const drops = [-0.16, 0, 0.16].map(x => this._part(new THREE.CapsuleGeometry(0.02, 0.07, 3, 5), mat('#6fb6ff'), x, -0.25, 0, cloud));
+    cloud.position.set(0, 2.6, 0);
+    cloud.visible = false;
+    g.add(cloud);
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.06, 6, 28), new THREE.MeshBasicMaterial({ color: '#d9ffda' }));
     ring.rotation.x = Math.PI / 2; ring.position.y = 0.08; ring.visible = false; g.add(ring);
     g.traverse(o => { o.userData.resident = r.id; });
@@ -570,40 +617,56 @@ export class IslandScene {
     const tag = document.createElement('div');
     tag.className = 'tag3d';
     tag.style.background = r.color;
-    tag.textContent = r.name;
+    const tagName = document.createElement('span');
+    tagName.textContent = r.name;
+    const tagMood = document.createElement('i');
+    tag.append(tagName, tagMood);
     this.overlay.append(tag);
-    return { id: r.id, group: g, torso, legL, legR, armL, armR, ring, tag, path: null, walkStart: 0, walkDur: 0,
-             lastPathKey: '', asleep: false, talking: false, facing: null, color: r.color, name: r.name };
+    let h = 0;
+    for (const ch of r.id) h = (h * 31 + ch.charCodeAt(0)) % 997;
+    return { id: r.id, group: g, body, torso, legL, legR, armL, armR, head, browL, browR, cheeks, skin, cloud, drops,
+             mouths: { smile, frown, open, flat }, ring, tag, tagMood, path: null, walkStart: 0, walkDur: 0,
+             lastPathKey: '', asleep: false, talking: false, color: r.color, name: r.name, phase: h / 97,
+             mood: r.mood || null, anim: null, talkUntil: 0 };
   }
 
-  syncResidents(residents, { walkSeconds = 4 } = {}) {
+  syncResidents(residents, { walkSeconds = 6, hold = new Set() } = {}) {
     this.setHomes(residents);
     const now = performance.now();
     for (const r of residents) {
       let f = this.figures.get(r.id);
-      if (!f) { f = this._figure(r); this.figures.set(r.id, f); f.group.position.set(r.x, 0, r.z); }
+      if (!f) { f = this._figure(r); this.figures.set(r.id, f); f.group.position.set(r.x, 0, r.z); f.lastPathKey = JSON.stringify(r.path); }
       const key = JSON.stringify(r.path);
+      f.pendingPath = hold.has(r.id) && key !== f.lastPathKey;   // they will set off once their scene is done
+      f.pendingPathT = r.path_t;
+      if (hold.has(r.id)) continue;                       // still playing out their last scene
       if (key !== f.lastPathKey) {
         f.lastPathKey = key;
         const pts = (r.path && r.path.length > 1 ? r.path : [[r.x, r.z]]).map(([x, z]) => new THREE.Vector3(x, 0, z));
-        pts[0].copy(f.group.position);                          // start from wherever they are drawn now
+        pts[0].copy(f.group.position);                    // start from wherever they are drawn now
         const len = pts.reduce((s, p, i) => i ? s + p.distanceTo(pts[i - 1]) : 0, 0);
+        const stride = { sad: 0.75, fear: 1.15, angry: 1.15, joy: 1.1, excited: 1.2 }[f.mood?.key] ?? 1;
         f.path = pts;
         f.pathLen = len;
         f.walkStart = now;
-        f.walkDur = len < 0.05 ? 0 : clamp(len / 5.5, 1.0, walkSeconds) * 1000;
+        f.walkDur = len < 0.05 ? 0 : clamp(len / (2.4 * stride), 1.6, walkSeconds) * 1000;   // a stroll, not a sprint
       }
       f.asleep = r.asleep;
       f.talking = (r.talking_with || []).length > 0;
       f.partner = (r.talking_with || [])[0] || null;
-      f.dim = r.asleep;
       f.status = r.doing;
       const cottage = this.cottages.get(r.id);
       if (cottage) cottage.home = r.place === r.home;
     }
   }
 
-  _walk(f, now, t) {
+  isWalking(id, t = Infinity) {  // on their way (or about to set off for a moment at island time t)
+    const f = this.figures.get(id);
+    return !!(f && ((f.pendingPath && f.pendingPathT <= t) || (f.walkDur > 0 && performance.now() - f.walkStart < f.walkDur)));
+  }
+
+  _animate(f, now, t) {
+    // 1. Walk along the path.
     let moving = false;
     if (f.path && f.path.length > 1 && f.walkDur > 0) {
       const p = clamp((now - f.walkStart) / f.walkDur, 0, 1);
@@ -614,7 +677,7 @@ export class IslandScene {
           const k = seg ? clamp(target / seg, 0, 1) : 1;
           const pos = f.path[i - 1].clone().lerp(f.path[i], k);
           const dx = pos.x - f.group.position.x, dz = pos.z - f.group.position.z;
-          if (Math.hypot(dx, dz) > 0.002) f.group.rotation.y = Math.atan2(dx, dz);
+          if (Math.hypot(dx, dz) > 0.002) f.group.rotation.y = lerpAngle(f.group.rotation.y, Math.atan2(dx, dz), 0.2);
           f.group.position.copy(pos);
           break;
         }
@@ -622,19 +685,112 @@ export class IslandScene {
       }
       moving = p < 1;
     }
-    const stride = moving ? Math.sin(t * 11 + f.id.length) * 0.5 : 0;
-    for (const [limb, sign] of [[f.legL, 1], [f.legR, -1], [f.armL, -1], [f.armR, 1]]) {
-      limb.rotation.x = moving ? stride * sign * 0.7 : limb.rotation.x * 0.85;
+    f.group.visible = !(f.asleep && !moving);
+    if (!f.group.visible) return;
+    // 2. Pose: walking, then mood, then talking, then the current emotion on top.
+    const q = { by: 0, bx: 0, brx: 0, brz: 0, spin: 0, sc: 1, hx: 0, hy: 0, hz: 0,
+                alx: 0, alz: -0.12, arx: 0, arz: 0.12, llx: 0, lrx: 0 };
+    const mood = f.mood && f.mood.strength >= 0.15 ? f.mood.key : null;
+    if (moving) {
+      const w = t * 7.5 + f.phase, st = Math.sin(w);
+      q.llx = st * 0.55; q.lrx = -st * 0.55; q.alx = -st * 0.45; q.arx = st * 0.45;
+      q.by = Math.abs(Math.sin(w)) * 0.04 * (mood === 'joy' || mood === 'excited' ? 2 : 1);
+    } else {
+      q.by = Math.sin(t * 1.6 + f.phase) * 0.01;          // breathing
+      if (f.talking && f.partner && this.figures.has(f.partner)) {
+        const o = this.figures.get(f.partner).group.position;
+        f.group.rotation.y = lerpAngle(f.group.rotation.y, Math.atan2(o.x - f.group.position.x, o.z - f.group.position.z), 0.06);
+      }
     }
-    f.torso.position.y = 0.92 + (moving ? Math.abs(Math.sin(t * 11)) * 0.04 : (f.talking ? Math.abs(Math.sin(t * 6)) * 0.02 : 0));
-    if (!moving && f.talking && f.partner && this.figures.has(f.partner)) {
-      const o = this.figures.get(f.partner).group.position;
-      const want = Math.atan2(o.x - f.group.position.x, o.z - f.group.position.z);
-      f.group.rotation.y = lerp(f.group.rotation.y, want, 0.08);
+    if (mood === 'sad') { q.hx += 0.28; q.brx += 0.06; }
+    if (mood === 'angry') { q.alz = -0.3; q.arz = 0.3; }
+    if (mood === 'fear' && !moving) q.bx += Math.sin(t * 38) * 0.006;
+    if (mood === 'pride') q.brx -= 0.05;
+    const talking = now < f.talkUntil;
+    if (talking && !moving) { q.hx += Math.sin(t * 5.5) * 0.06; q.arx = -0.5 + Math.sin(t * 4.2) * 0.3; q.arz = 0.35; }
+    let face = mood || 'neutral';
+    const a = f.anim;
+    if (a) {
+      const e = (now - a.start) / 1000;
+      if (e > a.dur) f.anim = null;
+      else {
+        face = a.key;
+        const fade = 1 - smooth(clamp((e - (a.dur - 0.5)) / 0.5, 0, 1)), s = a.s * fade;
+        switch (a.key) {
+          case 'joy': case 'excited':
+            q.by += Math.abs(Math.sin(e * Math.PI * (a.key === 'excited' ? 3.2 : 2.4))) * 0.42 * s;
+            q.alz = lerp(q.alz, -2.5, s); q.arz = lerp(q.arz, 2.5, s); q.alx = q.arx = 0;
+            if (a.key === 'excited') q.spin = smooth(clamp(e / 0.9, 0, 1)) * TAU;
+            break;
+          case 'pride':
+            q.brx -= 0.16 * s; q.sc = 1 + 0.07 * s;
+            q.arz = lerp(q.arz, 2.7, s); q.arx = Math.sin(e * 9) * 0.25 * s;
+            q.alz = lerp(q.alz, -0.5, s);
+            break;
+          case 'warm':
+            q.brz = Math.sin(e * 3.4) * 0.14 * s; q.hz = Math.sin(e * 3.4 + 0.5) * 0.12 * s;
+            q.alz = lerp(q.alz, -0.8, s); q.arz = lerp(q.arz, 0.8, s);
+            break;
+          case 'sad':
+            q.brx += 0.22 * s; q.hx += 0.5 * s; q.by -= 0.06 * s; q.alz = -0.04; q.arz = 0.04; q.alx = q.arx = 0.1 * s;
+            break;
+          case 'angry':
+            q.bx += Math.sin(e * 55) * 0.05 * s; q.by += Math.abs(Math.sin(e * 11)) * 0.07 * s;
+            q.alz = -0.45; q.arz = 0.45; q.alx = q.arx = 0.25 * s; q.hx -= 0.1 * s;
+            break;
+          case 'fear':
+            q.bx += Math.sin(e * 80) * 0.03 * s; q.sc = 1 - 0.08 * s; q.hy = Math.sin(e * 4) * 0.5 * s;
+            q.alx = q.arx = -1.0 * s; q.alz = 0.25 * s; q.arz = -0.25 * s;
+            break;
+          case 'embarrassed':
+            q.alx = q.arx = -2.4 * s; q.alz = 0.55 * s; q.arz = -0.55 * s; q.hx += 0.32 * s;
+            break;
+          case 'surprise':
+            q.by += Math.max(0, Math.sin(clamp(e / 0.45, 0, 1) * Math.PI)) * 0.3 * s;
+            q.alz = lerp(q.alz, -1.3, s); q.arz = lerp(q.arz, 1.3, s); q.hx -= 0.12 * s;
+            break;
+          case 'thoughtful':
+            q.arx = -2.1 * s; q.arz = -0.35 * s; q.hz = 0.16 * s; q.hx -= 0.06 * s;
+            break;
+          case 'calm':
+            q.brz = Math.sin(e * 2) * 0.05 * s;
+            break;
+        }
+      }
     }
-    const home = f.asleep && !moving;
-    f.group.visible = !home;
-    return moving;
+    // 3. Apply (eased, so poses blend rather than snap).
+    const dt60 = Math.min(6, (this.dt || 1 / 60) * 60);     // frame-rate independent easing
+    const ease = (obj, prop, v, k = 0.25) => { obj[prop] += (v - obj[prop]) * (1 - Math.pow(1 - k, dt60)); };
+    ease(f.body.position, 'x', q.bx, 0.5); ease(f.body.position, 'y', q.by, 0.5);
+    ease(f.body.rotation, 'x', q.brx); ease(f.body.rotation, 'z', q.brz);
+    f.body.rotation.y = q.spin;
+    ease(f.body.scale, 'x', q.sc); ease(f.body.scale, 'y', q.sc); ease(f.body.scale, 'z', q.sc);
+    ease(f.head.rotation, 'x', q.hx); ease(f.head.rotation, 'y', q.hy); ease(f.head.rotation, 'z', q.hz);
+    ease(f.armL.rotation, 'x', q.alx, 0.3); ease(f.armL.rotation, 'z', q.alz, 0.3);
+    ease(f.armR.rotation, 'x', q.arx, 0.3); ease(f.armR.rotation, 'z', q.arz, 0.3);
+    ease(f.legL.rotation, 'x', q.llx, 0.35); ease(f.legR.rotation, 'x', q.lrx, 0.35);
+    this._face(f, face, talking && Math.sin(t * 15) > 0);
+    // Rain cloud while sad; red face while angry; pink while embarrassed.
+    const sadNow = face === 'sad' && (a || (f.mood && f.mood.strength >= 0.45));
+    f.cloud.visible = !!sadNow;
+    if (sadNow) f.drops.forEach((d, i) => { d.position.y = -0.2 - ((t * 1.4 + i * 0.33) % 1) * 0.55; });
+    const flush = face === 'angry' ? '#ff9a88' : face === 'embarrassed' ? '#ffc0c0' : '#f1d3bd';
+    f.skin.color.lerp(TMP_COLOR.set(flush), 1 - Math.pow(0.92, dt60));
+  }
+
+  _face(f, key, mouthOpen) {
+    const m = f.mouths;
+    const shape = mouthOpen ? 'open' : ({ joy: 'smile', excited: 'open', pride: 'smile', warm: 'smile', calm: 'smile',
+      sad: 'frown', angry: 'frown', fear: 'open', embarrassed: 'flat', surprise: 'open', thoughtful: 'flat' }[key] || 'flat');
+    for (const [name, mesh] of Object.entries(m)) mesh.visible = name === shape;
+    m.smile.scale.setScalar(key === 'calm' ? 0.7 : key === 'joy' || key === 'warm' ? 1.15 : 1);
+    m.open.scale.set(1, key === 'surprise' || key === 'fear' ? 1.6 : 1.1, 0.5);
+    const brows = { angry: [-0.42, 0.42, 0], sad: [0.35, -0.35, 0], fear: [0.35, -0.35, 0.03], embarrassed: [0.3, -0.3, 0],
+      surprise: [0, 0, 0.05], excited: [0, 0, 0.04], thoughtful: [0.15, 0, 0.035], pride: [-0.12, 0.12, 0] }[key] || [0, 0, 0];
+    f.browL.rotation.z = brows[0]; f.browR.rotation.z = brows[1];
+    f.browL.position.y = 0.33 + brows[2]; f.browR.position.y = 0.33 + (key === 'thoughtful' ? 0 : brows[2]);
+    const blush = key === 'warm' || key === 'embarrassed' || key === 'excited';
+    f.cheeks.forEach(c => { c.visible = blush; });
   }
 
   clearResidents() {          // a different world is opening: take the last cast off the island
@@ -645,11 +801,12 @@ export class IslandScene {
       c.label.el.remove();
       this.windowMats = this.windowMats.filter(m => !c.windows.includes(m));
     }
-    for (const b of [...this.bubbles, ...this.pops]) b.el.remove();
+    for (const b of [...this.bubbles, ...this.pops, ...this.fx]) b.el.remove();
     this.figures.clear();
     this.cottages.clear();
     this.bubbles = [];
     this.pops = [];
+    this.fx = [];
     this.selected = null;
     this.cinema = { next: 0, focus: null };
   }
@@ -667,7 +824,7 @@ export class IslandScene {
     const live = this.bubbles.filter(b => b.expire > now + 300).sort((a, c) => a.born - c.born);
     for (const b of live.slice(0, Math.max(0, live.length - (this.maxBubbles - 1)))) b.expire = now + 300;
     const el = document.createElement('div');
-    el.className = 'bubble' + (kind === 'inner' ? ' inner' : kind === 'letter' ? ' letter' : '');
+    el.className = 'bubble' + (kind === 'inner' ? ' inner' : kind === 'letter' ? ' letter' : kind === 'deed' ? ' deed' : '');
     const head = document.createElement('span');
     head.className = 'to';
     const dot = document.createElement('i');
@@ -677,7 +834,8 @@ export class IslandScene {
     el.append(document.createTextNode(text.length > 190 ? text.slice(0, 187) + '…' : text));
     this.overlay.append(el);
     const life = clamp(2500 + text.length * 45, 3500, 9000);
-    this.bubbles.push({ id, el, born: performance.now(), expire: performance.now() + life });
+    this.bubbles.push({ id, el, born: now, expire: now + life });
+    if (kind === 'say') f.talkUntil = now + Math.min(life, 1800 + text.length * 35);
   }
 
   pop(id, text) {
@@ -688,6 +846,52 @@ export class IslandScene {
     el.textContent = text;
     this.overlay.append(el);
     this.pops.push({ id, el, expire: performance.now() + 3200 });
+  }
+
+  setMood(id, emotion) {          // the face they keep until their next experience
+    const f = this.figures.get(id);
+    if (!f || !emotion) return;
+    f.mood = emotion;
+    const shown = emotion.strength >= 0.25 && !['calm', 'thoughtful'].includes(emotion.key);
+    f.tagMood.textContent = shown ? ` ${emotion.emoji}` : '';
+  }
+
+  emote(id, emotion) {            // a strong reading: the whole body shows it, with an emoji
+    const f = this.figures.get(id);
+    if (!f || !emotion) return;
+    this.setMood(id, emotion);
+    if (!f.group.visible) return;
+    const dur = { sad: 4.5, surprise: 1.7, joy: 2.4, excited: 2.8, fear: 2.8 }[emotion.key] ?? 2.6;
+    f.anim = { key: emotion.key, start: performance.now(), dur, s: clamp(0.55 + emotion.strength * 0.6, 0.6, 1) };
+    this._fx(id, `${emotion.emoji} ${emotion.label}`, 'emote', { life: 3000, y: 1.75, side: true });   // beside the face
+    const burst = { joy: ['✨', 6], excited: ['✨', 8], pride: ['✨', 5], warm: ['❤️', 6], angry: ['💢', 3],
+      fear: ['💧', 2], embarrassed: ['💦', 3], surprise: ['❗', 1], thoughtful: ['💭', 1], sad: ['💧', 2] }[emotion.key];
+    if (!burst) return;
+    for (let i = 0; i < burst[1]; i++) {
+      setTimeout(() => this._fx(id, burst[0], 'particle', {
+        life: 1900, dx: (Math.random() - 0.5) * 110, dy: -50 - Math.random() * 60, y: 2.0 }), 150 + i * 110);
+    }
+  }
+
+  bond(a, b, warmer) {            // a relationship just turned a corner: hearts (or not) between them
+    const fa = this.figures.get(a), fb = this.figures.get(b);
+    if (!fa || !fa.group.visible) return;
+    const pair = fb && fb.group.visible && fb.group.position.distanceTo(fa.group.position) < 8 ? b : null;
+    this._fx(a, warmer ? '💞' : '💔', 'emote bond', { life: 3000, pair, y: 2.3 });
+    if (warmer) for (let i = 0; i < 4; i++) {
+      setTimeout(() => this._fx(a, '❤️', 'particle', { life: 1800, pair, dx: (Math.random() - 0.5) * 70, dy: -40 - Math.random() * 40, y: 1.9 }), 200 + i * 140);
+    }
+  }
+
+  _fx(id, text, cls, { life = 2600, dx = 0, dy = 0, y = 2.45, pair = null, side = false } = {}) {
+    const el = document.createElement('div');
+    el.className = cls;
+    el.textContent = text;
+    el.style.setProperty('--dx', `${dx}px`);
+    el.style.setProperty('--dy', `${dy}px`);
+    el.style.animationDuration = `${life}ms`;
+    this.overlay.append(el);
+    this.fx.push({ id, el, expire: performance.now() + life, y, pair, side });
   }
 
   onPick(fn) { this.pickHandlers.push(fn); }
@@ -867,7 +1071,7 @@ export class IslandScene {
       p.ring.material.opacity = p.eventActive ? 0.35 + Math.sin(t * 3) * 0.25 : 0;
       p.ring.scale.setScalar(1 + (p.eventActive ? Math.sin(t * 3) * 0.04 : 0));
     }
-    for (const f of this.figures.values()) this._walk(f, now, t);
+    for (const f of this.figures.values()) this._animate(f, now, t);
     this._camera(now);
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
@@ -909,6 +1113,16 @@ export class IslandScene {
       const f = this.figures.get(p.id);
       if (!f || now > p.expire) { p.el.remove(); return false; }
       this._project(f.group.position, p.el, 2.0);
+      return true;
+    });
+    this.fx = this.fx.filter(p => {
+      const f = this.figures.get(p.id);
+      if (!f || now > p.expire || !f.group.visible) { p.el.remove(); return false; }
+      const other = p.pair && this.figures.get(p.pair);
+      const anchor = other ? TMP_VEC.copy(f.group.position).add(other.group.position).multiplyScalar(0.5)
+        : p.side ? TMP_VEC.copy(f.group.position).addScaledVector(TMP_RIGHT.setFromMatrixColumn(this.camera.matrixWorld, 0), 0.42)
+        : f.group.position;
+      this._project(anchor, p.el, p.y);
       return true;
     });
   }

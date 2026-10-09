@@ -280,3 +280,57 @@ def test_follow_ups_wait_for_morning_and_get_announced(manager):
         world._direct()
     assert follow["announced"] is True
     assert any(i["kind"] == "event" and i.get("title") == "Boat overdue -- resolved" for i in world.feed)
+
+
+# --- emotions, bonds, pacing ---------------------------------------------------------------
+from app.world.emotion import read_emotion  # noqa: E402
+
+
+@pytest.mark.parametrize("appraisal, key", [
+    ({"valence": 0.8, "intensity": 0.7, "social": 0.1}, "joy"),
+    ({"valence": 0.8, "intensity": 0.7, "social": 0.8}, "warm"),
+    ({"valence": 0.7, "intensity": 0.6, "agency": 0.6}, "pride"),
+    ({"valence": 0.6, "intensity": 0.7, "novelty": 0.8}, "excited"),
+    ({"valence": -0.7, "intensity": 0.6, "threat_challenge": -0.7}, "fear"),
+    ({"valence": -0.6, "intensity": 0.6, "agency": -0.5}, "angry"),
+    ({"valence": -0.6, "intensity": 0.6, "agency": 0.6, "social": 0.5}, "embarrassed"),
+    ({"valence": -0.5, "intensity": 0.4}, "sad"),
+    ({"valence": 0.0, "intensity": 0.6, "novelty": 0.9}, "surprise"),
+    ({"valence": 0.05, "intensity": 0.2}, "calm"),
+])
+def test_emotion_names_mindforms_appraisal(appraisal, key):
+    emotion = read_emotion(appraisal)
+    assert emotion["key"] == key and emotion["emoji"] and 0 <= emotion["strength"] <= 1
+
+
+def test_no_appraisal_no_emotion():
+    assert read_emotion(None) is None and read_emotion({}) is None
+
+
+def test_headlines_carry_dwell_and_pace_the_beat(manager):
+    world = make_world(manager)
+    world.beat_dwell = 0.0
+    item = world.emit("say", "Hello there, Rex. How was the boatyard this morning?", actor="aya")
+    assert 1.8 <= item["dwell"] <= 3.2
+    assert "dwell" not in world.emit("outcome", "I sat by the fountain.", actor="aya")
+    world.emit("event", "A storm rolled in.")
+    assert world.beat_dwell == pytest.approx(item["dwell"] + 2.6)
+
+
+def test_relationship_turning_a_corner_is_a_bond_event(manager):
+    world = make_world(manager)
+    aya = world.residents["aya"]
+    aya.relationships["rex"] = {"affinity": 0.19, "talks": 3, "last": ""}
+
+    class Turn:
+        reply, formation = "Thanks, Rex!", None
+        appraisal = {"valence": 0.9, "intensity": 0.8, "social": 0.9}
+        state = aya.state
+
+    plan = {"talk": {"aya": "rex"}, "brushoff": set(), "addressed_by": {"aya": [], "rex": ["aya"]},
+            "actions": {"aya": {"type": "talk"}}}
+    world._settle("aya", [], "Rex smiled at me.", "rules", Turn(), None, plan)
+    bonds = [i for i in world.feed if i["kind"] == "bond"]
+    assert bonds and bonds[-1]["feeling"] == "warm" and bonds[-1]["warmer"] is True
+    emotions = [i for i in world.feed if i["kind"] == "emotion"]
+    assert emotions and emotions[-1]["key"] == "warm" and aya.mood["key"] == "warm"

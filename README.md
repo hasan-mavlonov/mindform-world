@@ -49,6 +49,10 @@ pip install -r requirements.txt
   `.env`. You can also set a separate key in this repo's `.env`.
 - **Three.js loads from the jsDelivr CDN**, so the browser needs internet access. The GPU only
   renders the island.
+- **The page looks like the old demo, or the terminal says a tab is running an old cached
+  page?** Your browser kept the previous version. That tab now shows "upgraded: reload this
+  page". Reload it once (Cmd+Shift+R). The new version is never cached, and an open tab reloads
+  itself when the server is upgraded.
 
 ## Making a world
 
@@ -74,14 +78,46 @@ pip install -r requirements.txt
 
 ## Watching
 
-- **Story** (right panel): every line said, every inner reaction, what formed, events and letters.
+**It plays at a watchable pace.** Everything that happens is queued and shown one moment at a
+time. At 1× that's about one every 1.5–3 seconds: a line said, a strong feeling, a relationship
+turning, an event, or a notable result ("🎣 I caught two mackerel off the pier").
+- People finish walking before they speak.
+- The server waits for each beat's moments to finish before running the next beat. At 1× an
+  island day takes about 12–15 minutes.
+- **2×** and **4×** speed this up, **½×** slows it down, and **max** is for data runs.
+- For a short video, record at 1× and timelapse it.
+
+**Feelings, animated.** Each experience MindForm reads is named as an emotion from MindForm's
+*own* appraisal (valence, intensity, threat, agency, social…). The world never decides how
+anyone feels.
+
+| Emotion | Animation |
+|---|---|
+| happy / excited | jump with arms up, sparkles |
+| proud | chest out, fist up |
+| warm | sway, blush, floating hearts |
+| sad | slump under a little rain cloud |
+| angry | red face, scowl, stomping and shaking |
+| scared | trembling, arms up |
+| embarrassed | hands over a blushing face |
+| surprised | a hop and arms out |
+| thoughtful | hand on chin |
+
+- Faces keep the last mood: smile, frown, open mouth, brows.
+- Mouths move while someone talks.
+- When a relationship turns a corner ("Aya now feels warm toward Rex") hearts or 💔 float
+  between them.
+
+- **Story** (right panel): every line said, every inner reaction, every feeling, what formed,
+  events and letters. It fills in step by step as the moments play.
 - **Resident** (click anyone):
   - their MindForm state: traits against their baseline, the three needs, esteem, stance,
     voice, lens, values, beliefs;
   - what formed them, and their relationships;
   - the last experiences exactly as MindForm was told them, with their replies.
 - **Bubbles**: speech is shown for everyone. Inner voice (their reply when nobody addressed
-  them) only appears for the resident you're watching, so the screen stays readable.
+  them) only appears for the resident you're watching, so the screen stays readable. The
+  residents list shows each person's current mood.
 - **Camera**: *Orbit*, *Follow* (selected resident), *Cinema* (cuts to whoever speaks, with
   subtitles).
 - **◉ Record** (or **H**) hides the interface for clean screen recording: just the island,
@@ -127,7 +163,7 @@ starts with them waking up.
 |---|---|
 | `setup.json` | mind version, modes, seed, pace, drama, the cast's creation specs |
 | `world.json` | current state, saved every beat (worlds resume after a restart) |
-| `experiences.jsonl` | one row per resident per beat: the structured facts, the narrated text MindForm read, its reply, MindForm's appraisal and formation, and the resident's state afterwards |
+| `experiences.jsonl` | one row per resident per beat: the structured facts, the narrated text MindForm read, its reply, MindForm's appraisal, the emotion it was named as, the formation, and the resident's state afterwards |
 | `feed.jsonl` | everything that happened, in order |
 | `minds/` | the mind's own files (v0: `data/characters/*.json`, memories, its appraisal log, its server log) |
 

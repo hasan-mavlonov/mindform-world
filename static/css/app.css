@@ -170,6 +170,8 @@ label small, .field small, .field span small { color: var(--faint); font-weight:
 .insp-head small { color: var(--muted); }
 .insp-now { background: rgba(168, 245, 184, .06); border-left: 2px solid var(--accent); padding: 9px 11px; margin: 12px 0; border-radius: 0 8px 8px 0; line-height: 1.5; }
 .insp-now small { display: block; color: var(--muted); }
+.insp-feel { font-size: 15px; font-weight: 700; margin: -2px 0 10px; }
+.insp-feel small { font-size: 11px; font-weight: 400; color: var(--muted); }
 .insp-quote { font-style: italic; color: #dcefe7; margin: 0 0 12px; line-height: 1.55; }
 .insp-quote::before { content: "“"; color: var(--accent); font-size: 18px; margin-right: 2px; }
 .sec { font-size: 10px; letter-spacing: 1.5px; color: #95d7ae; margin: 16px 0 8px; font-weight: 700; }
@@ -224,11 +226,31 @@ body.recording .caption { bottom: 40px; }
   white-space: nowrap; box-shadow: 0 2px 8px rgba(0, 0, 0, .25); }
 .tag3d.dim { opacity: .55; }
 .tag3d small { font-weight: 500; opacity: .75; margin-left: 4px; }
+.tag3d i { font-style: normal; }
+/* emotions: a big emoji + word over the head, and particles that float off */
+.emote { position: absolute; transform: translate(0, -50%); font-size: 15px; font-weight: 800; white-space: nowrap; color: #1d2a26;
+  background: rgba(255, 253, 246, .94); padding: 4px 11px 4px 8px; border-radius: 99px; box-shadow: 0 6px 18px rgba(0, 0, 0, .3);
+  animation-name: emote-pop; animation-timing-function: ease-out; animation-fill-mode: forwards; pointer-events: none; }
+.emote.bond { font-size: 30px; background: none; box-shadow: none; padding: 0; transform: translate(-50%, -100%); }
+@keyframes emote-pop {
+  0% { opacity: 0; margin-top: 12px; scale: .4; }
+  12% { opacity: 1; margin-top: 0; scale: 1.15; }
+  20% { scale: 1; }
+  80% { opacity: 1; margin-top: -10px; }
+  100% { opacity: 0; margin-top: -26px; } }
+.particle { position: absolute; transform: translate(-50%, -100%); font-size: 18px; pointer-events: none;
+  animation-name: particle-float; animation-timing-function: ease-out; animation-fill-mode: forwards; }
+@keyframes particle-float {
+  0% { opacity: 0; translate: 0 0; scale: .5; }
+  15% { opacity: 1; scale: 1.1; }
+  100% { opacity: 0; translate: var(--dx) var(--dy); scale: .8; } }
 .bubble { position: absolute; transform: translate(-50%, -100%); max-width: 240px; width: max-content; padding: 7px 11px; border-radius: 14px; font-size: 12px; line-height: 1.4;
   background: #fffdf6; color: #1d2a26; box-shadow: 0 8px 22px rgba(0, 0, 0, .3); transition: opacity .4s; }
 .bubble::after { content: ""; position: absolute; left: 50%; bottom: -7px; margin-left: -7px; border: 7px solid transparent; border-bottom: 0; border-top-color: #fffdf6; }
 .bubble.inner { background: rgba(232, 246, 240, .82); font-style: italic; color: #2c4a40; border-radius: 18px; }
 .bubble.inner::after { border-top-color: rgba(232, 246, 240, .82); }
+.bubble.deed { background: rgba(236, 244, 240, .9); font-size: 11.5px; color: #3b524a; max-width: 220px; }
+.bubble.deed::after { border-top-color: rgba(236, 244, 240, .9); }
 .bubble.letter { background: #fff4d6; }
 .bubble.letter::after { border-top-color: #fff4d6; }
 .bubble.fade { opacity: 0; }

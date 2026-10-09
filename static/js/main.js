@@ -17,6 +17,7 @@ const lobby = new Lobby({ onOpen: id => openWorld(id) });
 async function boot() {
   try {
     const status = await api('/api/status');
+    app.version = status.app_version;
     scene.build(status.map);
     app.map = status.map;
     await lobby.load();
@@ -50,6 +51,8 @@ function openWorld(id) {
   $('#story').replaceChildren();
   $('#res-list').replaceChildren();
   resRows.clear();
+  show.queue = [];
+  show.nextAt = 0;
   scene.clearResidents();
   $('#inspector').replaceChildren(el('p', { class: 'muted center' }, 'Click a resident on the island or in the list.'));
   scene.setLobby(false);
@@ -85,6 +88,10 @@ function showError(text) {
 const pad = n => String(n).padStart(2, '0');
 
 function apply(s) {
+  if (s.app_version && app.version && s.app_version !== app.version) {
+    location.reload();                              // the server was upgraded under this tab
+    return;
+  }
   app.state = s;
   app.polls++;
   for (const r of s.residents) app.residents.set(r.id, r);
@@ -118,13 +125,17 @@ function apply(s) {
   $('#c-play').disabled = s.status !== 'ready';
   $('#c-step').disabled = s.running || s.busy || s.status !== 'ready';
   setActive('#c-speed', String(s.speed));
-  // 3D
+  // 3D. The feed goes first: anyone whose earlier scene is still playing keeps their place
+  // until it has played (then they walk on to where the server already has them).
   scene.setTime(s.clock, s.weather, s.events);
-  const pace = s.speed > 0 ? s.base_beat_seconds / s.speed : 1.5;
-  scene.syncResidents(s.residents, { walkSeconds: Math.max(1.2, Math.min(5, pace * 0.8)) });
+  ingestFeed(s.feed);
+  const queuedFrom = show.queue.length ? Math.min(...show.queue.map(i => i.t)) : Infinity;
+  const hold = new Set(s.residents.filter(r => r.path_t > queuedFrom).map(r => r.id));
+  const walk = s.speed > 0 ? (s.walk_seconds || 5) / s.speed * 0.95 : 1.2;
+  scene.syncResidents(s.residents, { walkSeconds: Math.max(1.2, walk), hold });
+  if (app.first) for (const r of s.residents) if (r.mood) scene.setMood(r.id, r.mood);
   renderResidents(s);
   renderEvents(s);
-  ingestFeed(s.feed);
   app.seq = s.feed_seq;
   app.first = false;
   if (app.selected) {
@@ -151,16 +162,18 @@ function renderResidents(s) {
     if (!row || !box.contains(row.el)) {
       const mood = el('span', { class: 'mood', title: 'how the last experience read to them' });
       const avatar = el('div', { class: 'avatar', style: `background:${r.color}` }, r.name[0], mood);
-      const doing = el('small'), why = el('small'), need = el('span', { class: 'res-need' });
+      const doing = el('small'), why = el('small'), need = el('span', { class: 'res-need' }), name = el('b', {}, r.name);
       const btn = el('button', { class: 'res', onclick: () => select(r.id) }, avatar,
-        el('div', { class: 'res-text' }, el('b', {}, r.name), doing, why), need);
-      row = { el: btn, avatar, mood, doing, why, need };
+        el('div', { class: 'res-text' }, name, doing, why), need);
+      row = { el: btn, avatar, mood, doing, why, need, name };
       resRows.set(r.id, row);
     }
     if (box.children[i] !== row.el) box.insertBefore(row.el, box.children[i] || null);
     row.el.classList.toggle('active', r.id === app.selected);
     row.avatar.classList.toggle('asleep', r.asleep);
     row.mood.style.background = moodColor(r);
+    const felt = scene.figures.get(r.id)?.mood;      // as the show has played it so far
+    row.name.textContent = felt && felt.strength >= 0.25 && !['calm', 'thoughtful'].includes(felt.key) ? `${r.name} ${felt.emoji}` : r.name;
     row.doing.textContent = `${r.doing} · ${r.place_name}`;
     row.why.textContent = r.intent && !r.asleep ? `↳ ${r.intent}` : '';
     const top = r.state.top_need;
@@ -178,8 +191,9 @@ function renderEvents(s) {
 }
 
 const FILTERS = {
-  all: ['say', 'reaction', 'formation', 'event', 'letter', 'weather', 'inject', 'outcome', 'system', 'born'],
-  speech: ['say'], inner: ['reaction'], formation: ['formation'], events: ['event', 'letter', 'weather', 'inject'],
+  all: ['say', 'reaction', 'emotion', 'bond', 'formation', 'event', 'letter', 'weather', 'inject', 'outcome', 'system', 'born'],
+  speech: ['say'], inner: ['reaction'], feelings: ['emotion', 'bond', 'formation'],
+  events: ['event', 'letter', 'weather', 'inject'],
 };
 
 function nameOf(id) { return app.residents.get(id)?.name || id || ''; }
@@ -199,6 +213,11 @@ function storyRow(it) {
     body = el('div', {}, el('span', { class: 'who' }, nameOf(it.actor)), ' · ', it.text);
   } else if (it.kind === 'event') {
     body = el('div', {}, el('b', {}, `${it.title || 'Event'}`), el('small', { class: 'src' }, it.place_name || ''), el('div', {}, it.text));
+  } else if (it.kind === 'emotion') {
+    body = el('div', {}, `${it.emoji} `, el('span', { class: 'who' }, nameOf(it.actor)), ` felt ${it.label}`,
+      el('small', { class: 'src' }, `MindForm valence ${it.valence >= 0 ? '+' : ''}${(it.valence || 0).toFixed(2)}`));
+  } else if (it.kind === 'bond') {
+    body = el('div', {}, it.warmer ? '💞 ' : '💔 ', it.text);
   } else if (it.kind === 'letter') {
     body = el('div', {}, '✉ ', el('b', {}, `Letter for ${nameOf(it.actor)}: `), it.text);
   } else if (it.kind === 'inject') {
@@ -214,32 +233,118 @@ function renderStory() {                         // full redraw: only when the f
   $('#story').replaceChildren(...app.story.filter(it => kinds.includes(it.kind)).slice(-250).reverse().map(storyRow));
 }
 
-function ingestFeed(items) {
-  if (!items.length) return;
-  const fresh = items.filter(it => FILTERS.all.includes(it.kind));
-  app.story.push(...fresh);
+function addStory(it) {
+  if (!FILTERS.all.includes(it.kind) || (it.kind === 'emotion' && !it.shown)) return;
+  app.story.push(it);
   if (app.story.length > 1500) app.story.splice(0, app.story.length - 1500);
-  const box = $('#story'), kinds = FILTERS[app.filter];
-  const rows = fresh.filter(it => kinds.includes(it.kind)).map(storyRow).reverse();
-  box.prepend(...rows);                            // newest on top, older rows untouched
+  if (!FILTERS[app.filter].includes(it.kind)) return;
+  const box = $('#story');
+  box.prepend(storyRow(it));                       // newest on top, older rows untouched
   while (box.children.length > 250) box.lastChild.remove();
-  if (app.first) return;                            // history: no bubbles for the backlog
-  const effects = [];
-  // Speech is public: everyone's shows. Inner voice and small formation steps only for whoever
-  // you are watching (selected, or the cinema camera's focus) -- the story feed keeps them all.
-  const watched = id => id === app.selected || (scene.camMode === 'cinema' && scene.cinema.focus === id);
+}
+
+// ------------------------------------------------------------------ the show
+// What happens is played one moment at a time -- about one every 1.5-3 s at 1x (each moment
+// carries its own "dwell", and the server waits for the same total before the next beat) -- so
+// a viewer can follow it. Speed scales it; a long backlog is caught up faster.
+const PRESENT = new Set(['say', 'reaction', 'emotion', 'formation', 'bond', 'letter', 'event', 'weather', 'inject', 'outcome']);
+const ARRIVE_FIRST = new Set(['say', 'reaction', 'emotion', 'bond', 'outcome']);
+const PLACE_ICON = { cafe: '☕', market: '🧺', library: '📚', town_hall: '🏛️', clinic: '🩺', workshop: '🔨', lighthouse: '🗼',
+  dock: '🎣', rowing_club: '🚣', beach: '🏖️', cliffs: '⛰️', greenhouse: '🌱', plaza: '⛲' };
+const show = { queue: [], nextAt: 0, waitingSince: 0 };
+
+function ingestFeed(items) {
   for (const it of items) {
-    if (it.kind === 'say') effects.push(() => { scene.bubble(it.actor, it.text, 'say', it.to_name); caption(it); scene.focusOn(it.actor); });
-    else if (it.kind === 'reaction') effects.push(() => { if (watched(it.actor)) { scene.bubble(it.actor, it.text, 'inner'); caption(it); } });
-    else if (it.kind === 'formation') effects.push(() => {
-      if (watched(it.actor) || Math.abs(it.delta || 0) >= 0.03) scene.pop(it.actor, '↑ ' + it.text.replace(/^.*? grew /, ''));
-    });
-    else if (it.kind === 'letter') effects.push(() => { scene.bubble(it.actor, '✉ ' + it.text, 'letter'); toast(`Letter for ${nameOf(it.actor)}`, it.text); });
-    else if (it.kind === 'event') effects.push(() => toast(it.title || 'Event', `${it.text}${it.place_name ? ` (${it.place_name})` : ''}`));
-    else if (it.kind === 'weather') effects.push(() => toast('Weather', it.text));
+    if (app.first || !PRESENT.has(it.kind) || (it.kind === 'outcome' && !it.notable)) addStory(it);   // backlog + quiet facts
+    else show.queue.push(it);
   }
-  const gap = effects.length > 14 ? 260 : 650;
-  effects.forEach((fn, i) => setTimeout(fn, i * gap));
+}
+
+const speedFactor = () => { const v = app.state ? app.state.speed : 1; return v > 0 ? v : 8; };
+const watched = id => id === app.selected || (scene.camMode === 'cinema' && scene.cinema.focus === id);
+
+setInterval(() => {
+  if (!app.worldId || !show.queue.length) return;
+  const now = performance.now();
+  if (now < show.nextAt) return;
+  const it = show.queue[0];
+  // People speak and react once they have arrived where it happens (never stalling for long).
+  if (it.actor && ARRIVE_FIRST.has(it.kind) && scene.isWalking(it.actor, it.t)) {
+    show.waitingSince = show.waitingSince || now;
+    if (now - show.waitingSince < 8000 / Math.min(speedFactor(), 4)) return;
+  }
+  show.waitingSince = 0;
+  show.queue.shift();
+  let dwell = present(it);
+  const backlog = show.queue.filter(q => q.dwell > 0).length;   // only moments that take screen time
+  if (backlog > 20) dwell *= 0.3; else if (backlog > 10) dwell *= 0.6;
+  show.nextAt = now + (dwell / speedFactor()) * 1000;
+}, 100);
+
+function takeQueued(kind, actor) {                 // the emotion that goes with a line plays with it
+  const i = show.queue.findIndex((q, n) => n < 12 && q.kind === kind && q.actor === actor);
+  return i >= 0 ? show.queue.splice(i, 1)[0] : null;
+}
+
+function feel(it) {                                 // every reading sets the face; strong ones get the body
+  addStory(it);
+  if (it.headline) scene.emote(it.actor, it); else scene.setMood(it.actor, it);
+}
+
+function present(it) {                              // -> seconds (at 1x) until the next moment
+  switch (it.kind) {
+    case 'say': {
+      addStory(it);
+      scene.bubble(it.actor, it.text, 'say', it.to_name);
+      scene.focusOn(it.actor);
+      caption(it);
+      const e = takeQueued('emotion', it.actor);
+      if (e) feel(e);
+      return it.dwell || 2;
+    }
+    case 'reaction': {
+      addStory(it);
+      const e = takeQueued('emotion', it.actor);
+      if (e) feel(e);
+      if (watched(it.actor)) { scene.bubble(it.actor, it.text, 'inner'); caption(it); return 1.8; }
+      return e && e.headline ? (e.dwell || 1.5) : 0.15;
+    }
+    case 'emotion':
+      feel(it);
+      if (it.headline) scene.focusOn(it.actor);
+      return it.dwell || (it.headline ? 1.5 : 0.05);
+    case 'outcome': {                               // a notable result of what they were doing
+      addStory(it);
+      const icon = PLACE_ICON[it.place] || (String(it.place).startsWith('home:') ? '🏠' : '•');
+      scene.bubble(it.actor, `${icon} ${it.text}`, 'deed');
+      return it.dwell || 1.4;
+    }
+    case 'formation':
+      addStory(it);
+      if (watched(it.actor) || Math.abs(it.delta || 0) >= 0.03) scene.pop(it.actor, '↑ ' + it.text.replace(/^.*? grew /, ''));
+      return 0.35;
+    case 'bond':
+      addStory(it);
+      scene.bond(it.actor, it.other, it.warmer);
+      scene.focusOn(it.actor);
+      return it.dwell || 1.8;
+    case 'letter':
+      addStory(it);
+      scene.bubble(it.actor, '✉ ' + it.text, 'letter');
+      toast(`Letter for ${nameOf(it.actor)}`, it.text);
+      return it.dwell || 2.6;
+    case 'event':
+      addStory(it);
+      toast(it.title || 'Event', `${it.text}${it.place_name ? ` (${it.place_name})` : ''}`);
+      return it.dwell || 2.6;
+    case 'weather':
+      addStory(it);
+      toast('Weather', it.text);
+      return it.dwell || 2;
+    default:
+      addStory(it);
+      return 0.3;
+  }
 }
 
 let captionTimer = null;
@@ -301,6 +406,9 @@ async function renderInspector(id) {
   if (r.goal) box.append(el('div', { class: 'muted', style: 'margin-top:10px;font-size:12px' }, `Wants: ${r.goal}`));
   box.append(el('div', { class: 'insp-now' }, r.asleep ? 'Asleep at home' : `${r.doing} · ${r.place_name}`,
     r.intent && !r.asleep ? el('small', {}, `why: ${r.intent} (${r.plan_source || '—'} planner)`) : null));
+  const felt = scene.figures.get(id)?.mood;
+  if (felt) box.append(el('div', { class: 'insp-feel' }, `${felt.emoji} ${felt.label}`,
+    el('small', {}, ` · MindForm read their last experience at valence ${felt.valence >= 0 ? '+' : ''}${(felt.valence || 0).toFixed(2)}`)));
   if (r.reply) box.append(el('p', { class: 'insp-quote' }, r.reply));
   box.append(el('button', { class: 'ghost', style: 'width:100%;margin-bottom:4px', onclick: () => openGod('whisper', id) }, `⚡ Whisper to ${r.name}`));
 
