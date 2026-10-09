@@ -303,7 +303,8 @@ class World:
         self.event_seq += 1
         event = {"id": self.event_seq, "kind": event.get("kind", "incident"), "title": event["title"],
                  "text": event["text"], "place": event.get("place"), "start": event["start"],
-                 "end": event["end"], "target": event.get("target"), "seen_by": [], "source": source}
+                 "end": event["end"], "target": event.get("target"), "seen_by": [], "source": source,
+                 "announced": announce}
         self.events.append(event)
         if announce:
             self.emit("event", event["text"], title=event["title"], place=event["place"],
@@ -341,11 +342,12 @@ class World:
             if hour in (10, 17):
                 self._ferry(now)
             incident = director.incident_due(self.rng, self.intensity)
-        for e in self.events:                                  # community events announce on start
-            if e["kind"] == "community" and e["start"] <= now < e["end"] and not e.get("announced"):
+        for e in self.events:                  # scheduled events (community, follow-ups) announce on start
+            if e["start"] <= now < e["end"] and not e.get("announced", True):
                 e["announced"] = True
                 self.emit("event", e["text"], title=e["title"], place=e["place"],
-                          place_name=self.place_name(e["place"]), source="community")
+                          place_name=self.place_name(e["place"]) if e["place"] else "the whole island",
+                          target=e.get("target"), source=e["source"])
         self.events = [e for e in self.events if e["end"] > now - 120]   # keep a little history
         return incident
 
@@ -389,6 +391,12 @@ class World:
         added = self._add_event(event, source=source)
         follow = director.follow_up(added)
         if follow:
+            hour = hour_of(follow["start"])
+            if hour >= BED_HOUR or hour < WAKE_HOUR:           # nobody is up: they hear it at breakfast
+                length = follow["end"] - follow["start"]
+                day = day_of(follow["start"]) + (1 if hour >= BED_HOUR else 0)
+                follow["start"] = (day - 1) * 1440 + WAKE_HOUR * 60
+                follow["end"] = follow["start"] + length
             self._add_event(follow, source="deck", announce=False)
 
     def _director_context(self) -> dict:

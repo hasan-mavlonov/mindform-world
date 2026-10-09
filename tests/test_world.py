@@ -264,3 +264,19 @@ def test_setup_validation():
         validate_setup(control_setup(characters=[{"mode": "bio", "bio": "  "}]))
     clean = validate_setup(control_setup(experiences_per_hour=12, intensity=0))
     assert clean["experiences_per_hour"] == 6 and clean["intensity"] == 1
+
+
+def test_follow_ups_wait_for_morning_and_get_announced(manager):
+    world = make_world(manager)
+    world.clock = 22 * 60
+    with world.lock:
+        world._add_incident({"title": "Boat overdue", "text": "A boat is late.", "place": "dock",
+                             "minutes": 180, "target": None})
+    follow = next(e for e in world.events if e["title"] == "Boat overdue -- resolved")
+    assert follow["start"] == 1440 + 7 * 60          # moved from 00:30 to Day 2, 07:00
+    assert follow["announced"] is False
+    world.clock = follow["start"]
+    with world.lock:
+        world._direct()
+    assert follow["announced"] is True
+    assert any(i["kind"] == "event" and i.get("title") == "Boat overdue -- resolved" for i in world.feed)
