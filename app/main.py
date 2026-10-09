@@ -45,6 +45,15 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="MindForm World", version="0.2.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
+@app.middleware("http")
+async def prevent_stale_frontend(request, call_next):
+    """Keep a locally developed SPA from mixing old frontend files with a new API."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
 
 def _world(wid: str):
     try:
