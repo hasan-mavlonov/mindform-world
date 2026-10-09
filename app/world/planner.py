@@ -13,8 +13,13 @@ An action is a dict:
     {"type": "do",   "activity": "<activity id>"}        (walks there first if needed)
     {"type": "go",   "place": "<place id>"}              (go and see what is going on)
     {"type": "talk", "person": "<resident id>", "say": "opening line"}
+    {"type": "secret"}                                   (spend the time on their secret, where it lives)
     {"type": "rest"} / {"type": "home"}
 plus "intent" (a few words of why, shown on screen) and "source" ("llm" / "rules").
+
+Besides the inner state, a resident's goal pulls them toward what would serve it, their secret
+needs tending (out of sight, when they can), and big news pulls people in (a fire draws
+helpers) or sends them home (a storm).
 """
 from __future__ import annotations
 
@@ -23,6 +28,7 @@ import math
 import random
 
 from app import llm
+from app.world.intrigue import goal_activities
 from app.world.places import ACTIVITIES, JOBS, LOCATIONS
 
 _SOCIAL_KEYS = {"plaza.music", "cafe.breakfast", "cafe.coffee", "market.browse", "clinic.volunteer",
@@ -44,13 +50,18 @@ job is to turn that inner state into a plausible, specific next move:
 - respond to what just happened to them and what is going on around the island.
 Never invent places, people or activities that are not in the options.
 
+- what they WANT (their goal) pulls them toward what would serve it;
+- if they have a SECRET, they protect it and need time to tend it ("secret"), preferably when
+  nobody is around -- but people get careless when stressed;
+- what they KNOW about others (gossip, things they saw) can make them seek someone out.
+
 If they talk to someone, "say" is the exact first line they say out loud: short, natural,
-in their own manner of speaking (see "Manner of speaking"). If they are already in a
+in their own voice (see "Voice" and "Manner of speaking"). If they are already in a
 conversation and want to keep talking, choose "talk" with the same person and leave "say"
-empty -- their mind supplies the words.
+empty -- the world supplies the words.
 
 Return JSON only, exactly:
-{{"action": "do" | "go" | "talk" | "rest" | "home",
+{{"action": "do" | "go" | "talk" | "secret" | "rest" | "home",
   "activity": "<activity id, for do>", "place": "<place id, for go>",
   "person": "<resident id, for talk>", "say": "<line, for talk>",
   "intent": "<5-12 words, third person: why they are doing this>"}}"""
@@ -67,8 +78,19 @@ def describe_context(ctx: dict) -> str:
     lines.append(f"\nRESIDENT: {ctx['name']} (id: {ctx['id']}). {ident}")
     lines.append(f"Job: {ctx['job_title']}" + (f", works {ctx['job_hours'][0]}:00-{ctx['job_hours'][1]}:00"
                                                 if ctx.get("job_hours") else ""))
+    if ctx.get("former_job"):
+        lines.append(f"They just lost their job ({ctx['former_job']}).")
     if ctx.get("goal"):
         lines.append(f"What they want right now: {ctx['goal']}")
+    if ctx.get("voice"):
+        lines.append(f"Voice: {ctx['voice']}")
+    secret = ctx.get("secret")
+    if secret:
+        known = secret.get("known_by_names") or []
+        lines.append(f"SECRET (private): {ctx['name']} {secret['text']}. Tending it means going to "
+                     f"{secret.get('place_name', secret['place'])} ({secret['place']}); best between "
+                     f"{secret['hours'][0]}:00 and {secret['hours'][1]}:00. "
+                     + ("Nobody knows." if not known else f"Known by: {', '.join(known)}."))
     lines.append(f"\nINNER STATE (from MindForm):\n{ctx['state_text']}")
     if ctx.get("inclination"):
         lines.append(f"What they are inclined to say next to {ctx['inclination']['to_name']}: "
@@ -86,8 +108,11 @@ def describe_context(ctx: dict) -> str:
     if ctx["relationships"]:
         lines.append("\nRELATIONSHIPS:")
         for rel in ctx["relationships"]:
-            lines.append(f"  - {rel['name']} (id {rel['id']}): {rel['feeling']}, talked {rel['talks']}x"
-                         + (f"; last: {rel['last']}" if rel.get("last") else ""))
+            lines.append(f"  - {rel['name']} (id {rel['id']}): {rel.get('label', rel['feeling'])} "
+                         f"(affection {rel.get('affection', rel['affinity']):+.2f}, trust {rel.get('trust', 0.0):+.2f}), "
+                         f"talked {rel['talks']}x" + (f"; last: {rel['last']}" if rel.get("last") else ""))
+    if ctx.get("knowledge"):
+        lines.append("WHAT THEY KNOW ABOUT OTHERS: " + " | ".join(f"{k['text']}" for k in ctx["knowledge"]))
     lines.append("\nOPTIONS")
     lines.append("Do here: " + ("; ".join(f"{a} ({ACTIVITIES[a]['label']})" for a in ctx["options"]["here"])
                                  or "nothing special"))
@@ -117,6 +142,8 @@ def _valid(action: dict, ctx: dict) -> dict | None:
         return {"type": "talk", "person": action["person"], "say": say, "intent": intent}
     if kind in ("rest", "home"):
         return {"type": kind, "intent": intent}
+    if kind == "secret" and ctx.get("secret") and not ctx["secret"].get("exposed"):
+        return {"type": "secret", "intent": intent}
     return None
 
 
@@ -187,6 +214,10 @@ def plan_rules(ctx: dict, rng: random.Random) -> dict:
     job = JOBS.get(ctx["job"] or "none", JOBS["none"])
     in_hours = bool(job["hours"]) and job["hours"][0] <= hour < job["hours"][1]
     event_places = {e["place"]: e for e in ctx["events"] if e.get("place")}
+    pulls = {e["pull"]["place"]: float(e["pull"].get("weight", 1.0)) for e in ctx["events"]
+             if e.get("active") and (e.get("pull") or {}).get("place")}
+    shelter = max([float(e["pull"].get("home", 0.0)) for e in ctx["events"] if e.get("active") and e.get("pull")] or [0.0])
+    wanted = set(goal_activities(ctx.get("goal") or ""))
     visited = set(ctx.get("visited_today") or [])
 
     options: list[tuple[float, dict]] = []
@@ -225,6 +256,10 @@ def plan_rules(ctx: dict, rng: random.Random) -> dict:
             s -= 0.8 + 1.5 * max(N, 0.0)
         if key in event_places:
             s += 1.2 + 0.8 * E + 0.6 * lean
+        if key in pulls:
+            s += 1.4 * pulls[key] + 0.6 * A + 0.4 * lean
+        if act_id in wanted:
+            s += 1.1
         crowd = sum(1 for p in ctx["people"] if p["place"] == place)
         if crowd and not act.get("job"):
             s += min(1.5, 0.45 * crowd) * (0.4 + E + rel_need + 0.5 * lean)
@@ -237,8 +272,18 @@ def plan_rules(ctx: dict, rng: random.Random) -> dict:
 
     for place, event in event_places.items():
         if place != ctx["place"]:
-            add(1.0 + 0.9 * E + 0.7 * lean + 0.4 * O, {"type": "go", "place": place,
-                                                       "intent": f"drawn to the {event['title'].lower()}"})
+            pull = pulls.get(place, 0.0)
+            add(1.0 + 0.9 * E + 0.7 * lean + 0.4 * O + 1.6 * pull + 0.5 * A * pull,
+                {"type": "go", "place": place,
+                 "intent": ("rushes over to help" if event.get("kind") == "fire" else f"drawn to the {event['title'].lower()}")})
+
+    secret = ctx.get("secret")
+    if secret and not secret.get("exposed"):
+        lo, hi = secret.get("hours") or (8, 22)
+        crowd_there = sum(1 for p in ctx["people"] if p["place"] == secret["place"])
+        s = (0.4 + 1.4 * aut_need + 0.6 * max(N, 0.0) + (1.6 if lo <= hour < hi else -1.2)
+             - (1.6 if in_hours else 0.0) - 0.35 * crowd_there - 1.5 * shelter)
+        add(s, {"type": "secret", "intent": "has something private to take care of"})
 
     talking = {p["id"] for p in ctx.get("talking_with") or []}
     rels = {r["id"]: r for r in ctx["relationships"]}
@@ -253,14 +298,19 @@ def plan_rules(ctx: dict, rng: random.Random) -> dict:
             s += 0.3 * (O + A) + 0.4                 # curiosity about someone new
         if in_hours and job["place"] and not person["here"]:
             s -= 1.2                                  # chatting at work is fine; leaving it isn't
-        say = "" if person["id"] in talking else _opener(ctx, person, rng)
+        known = [k for k in ctx.get("knowledge") or [] if k["about"] != person["id"]]
+        if known:
+            s += 0.4 + 0.3 * E                        # something to tell them
+        if secret and person["id"] in (secret.get("known_by") or []):
+            s -= 0.6                                  # the one who knows: awkward
+        say = ""                                      # the world writes the words (voice.py)
         intent = ("keeps the conversation going" if person["id"] in talking
                   else "wants company" if rel_need > 0.45 else f"curious about {person['name']}"
                   if not rel.get("talks") else f"seeks out {person['name']}")
         add(s, {"type": "talk", "person": person["id"], "say": say, "intent": intent})
 
-    add(0.2 + 0.8 * max(-lean, 0.0) + 0.6 * max(N, 0.0) * (1 if bad_weather else 0.3),
-        {"type": "home", "intent": "wants to be alone at home"})
+    add(0.2 + 0.8 * max(-lean, 0.0) + 0.6 * max(N, 0.0) * (1 if bad_weather else 0.3) + 2.2 * shelter,
+        {"type": "home", "intent": "sheltering from the storm" if shelter else "wants to be alone at home"})
 
     # Softmax pick (seeded): stable but not robotic.
     temperature = 0.6

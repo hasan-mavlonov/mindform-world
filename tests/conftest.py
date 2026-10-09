@@ -24,6 +24,8 @@ def _no_llm(monkeypatch):
     monkeypatch.setattr(config, "llm_settings", no_key)
     import app.llm as llm
     monkeypatch.setattr(llm, "llm_settings", no_key)
+    monkeypatch.setattr(llm, "RETRY_BASE_DELAY", 0.0)       # retries without the backoff sleeps
+    llm.reset_circuit()
 
 
 def control_setup(**overrides):

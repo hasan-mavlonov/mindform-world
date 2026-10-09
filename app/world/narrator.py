@@ -45,13 +45,23 @@ def fact_sentence(item: dict) -> str:
     if k == "stay":
         return f"I stayed at {item['place']} for a while."
     if k == "said":
+        if item.get("passing"):
+            return f"On the way I passed {item['to']} and said: \"{item['line']}\""
         return f"I said to {item['to']}: \"{item['line']}\""
+    if k == "secret_work":
+        return item["text"]
+    if k == "saw":
+        return f"I noticed something: {item['text']}"
+    if k == "parting":
+        return f"Before we parted, {item['who']} said to me: \"{item['line']}\""
     if k == "answer":
         return f"{item['who']} answered: \"{item['line']}\""
     if k == "no_answer":
         return f"{item['who']} did not say anything back."
     if k == "brushoff":
         return f"{item['who']} kept walking toward {item['to_place']} without stopping."
+    if k == "heard" and item.get("passing"):
+        return f"On the way I passed {item['who']}, who said to me: \"{item['line']}\""
     if k == "heard":
         lead = f"{item['who']} came over" + (f" while I was busy ({item['while']})" if item.get("while") else "")
         return (f"{lead} and said to me: \"{item['line']}\"" if item.get("approach")

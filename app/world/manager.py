@@ -60,6 +60,8 @@ def validate_setup(setup: dict) -> dict:
             "levels": {k: int(v) for k, v in (c.get("levels") or {}).items() if str(v).isdigit() and 1 <= int(v) <= 5},
             "job": c.get("job") if c.get("job") in JOBS else "none",
             "goal": (c.get("goal") or "").strip()[:200],
+            "secret": (c.get("secret") or "").strip()[:200],
+            "voice": (c.get("voice") or "").strip()[:200],
             "color": c.get("color") if re.fullmatch(r"#[0-9a-fA-F]{6}", c.get("color") or "") else None,
         })
     try:
@@ -74,6 +76,7 @@ def validate_setup(setup: dict) -> dict:
         "seed": seed,
         "experiences_per_hour": max(3, min(6, int(setup.get("experiences_per_hour", 4)))),
         "intensity": max(1, min(3, int(setup.get("intensity", 2)))),
+        "voices": "mind" if setup.get("voices") == "mind" else "styled",
         "characters": clean,
         "cloned_from": setup.get("cloned_from"),
         "created": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -167,7 +170,7 @@ class WorldManager:
                         "status": state.get("status", "unfinished"),
                         "residents": [r.get("name") for r in state.get("residents", [])],
                         "setup": {k: setup.get(k) for k in ("version", "world_brain", "mind_llm", "seed",
-                                                            "experiences_per_hour", "intensity")},
+                                                            "experiences_per_hour", "intensity", "voices")},
                         "version_name": version_name(setup.get("version", "")), "loaded": False})
         return out
 

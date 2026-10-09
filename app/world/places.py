@@ -262,6 +262,23 @@ ACTIVITIES: dict[str, dict] = {
                       (1, "-", "I burned the rice and ate dry bread instead.", None)]},
 }
 
+# How a resident thinks of what they just did ("so much for the fishing").
+ACTIVITY_TOPIC = {
+    "plaza.sit": "the fountain", "plaza.music": "the busking", "cafe.breakfast": "breakfast", "cafe.coffee": "the coffee",
+    "cafe.work": "the café shift", "market.groceries": "the shopping", "market.browse": "the market", "market.work": "the stall",
+    "library.read": "the book", "library.study": "the studying", "library.letter": "the letter home",
+    "library.work": "the library desk", "town_hall.notices": "the notice board", "town_hall.work": "the paperwork",
+    "clinic.checkup": "the check-up", "clinic.volunteer": "the clinic", "clinic.work": "the clinic shift",
+    "workshop.repair": "the repair job", "workshop.build": "the woodwork", "workshop.work": "the boatyard work",
+    "lighthouse.climb": "the climb", "lighthouse.watch": "the ships", "lighthouse.work": "the lamp",
+    "dock.fish": "the fishing", "dock.watch": "the boats", "dock.work": "the lobster pots",
+    "rowing_club.weights": "the training", "rowing_club.row": "the rowing", "rowing_club.work": "the coaching",
+    "beach.swim": "the swim", "beach.walk": "the beach walk", "beach.bonfire": "the bonfire",
+    "cliffs.sit": "the cliffs", "cliffs.hike": "the hike", "greenhouse.tend": "the plants",
+    "greenhouse.harvest": "the harvest", "greenhouse.work": "the garden work", "home.rest": "a quiet hour",
+    "home.cook": "dinner",
+}
+
 # Trades a resident can be given at creation: id -> (title, place, work hours, activity).
 JOBS: dict[str, dict] = {
     "none": {"title": "No job (newcomer)", "place": None, "hours": None, "activity": None},
