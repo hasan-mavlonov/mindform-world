@@ -65,7 +65,7 @@ def build(world, preset: str, *, target: str | None = None, place: str | None = 
                  "topic": "the storm",
                  "text": "A storm broke over the island: gale-force wind and lashing rain. The harbor master "
                          "announced that all ferries are cancelled until further notice.",
-                 "pull": {"home": 1.4}}
+                 "pull": {"home": 1.4}, "recap": "A storm cancelled every ferry off the island"}
         return event, {"weather": "storm", "weather_hold": 180, "ferry_cancelled": True}
 
     if preset == "stranger":
@@ -78,7 +78,8 @@ def build(world, preset: str, *, target: str | None = None, place: str | None = 
                              f"{name(rid)} by name.",
                  "personal": {rid: "Word reached me that a stranger in a long grey coat at the Ferry Dock is going "
                                    "around asking for me by name."},
-                 "pull": {"place": "dock", "weight": 1.2}}
+                 "pull": {"place": "dock", "weight": 1.2},
+                 "recap": f"A stranger came off a boat asking for {name(rid)}"}
         return event, {}
 
     if preset == "expose":
@@ -89,7 +90,8 @@ def build(world, preset: str, *, target: str | None = None, place: str | None = 
                  "target_name": name(rid), "topic": f"the letter about {name(rid)}",
                  "text": f"An anonymous letter was slipped under every door on the island. It says: '{reveal}'",
                  "personal": {rid: f"An anonymous letter was slipped under every door on the island. It says: "
-                                   f"'{reveal}' Everyone has read it."}}
+                                   f"'{reveal}' Everyone has read it."},
+                 "recap": f"An anonymous letter exposed {name(rid)}'s secret to the whole island"}
         return event, {"expose": rid}
 
     if preset == "fire":
@@ -103,7 +105,8 @@ def build(world, preset: str, *, target: str | None = None, place: str | None = 
                  "far_text": f"Smoke is rising over the {pname} and the fire bell is ringing across the island.",
                  "personal": workers, "pull": {"place": where, "weight": 2.0},
                  "follow": {"delay": 90, "minutes": 120, "title": f"Fire at the {pname} -- out",
-                            "text": f"The fire at the {pname} is out. One wall is black with soot and the windows are gone."}}
+                            "text": f"The fire at the {pname} is out. One wall is black with soot and the windows are gone."},
+                 "recap": f"Fire tore through the {pname}"}
         return event, {}
 
     if preset == "festival":
@@ -111,7 +114,7 @@ def build(world, preset: str, *, target: str | None = None, place: str | None = 
                  "topic": "the festival",
                  "text": "A surprise festival started in Fountain Plaza: a brass band, paper lanterns, free food and dancing.",
                  "far_text": "Music and cheering are drifting over from Fountain Plaza: a surprise festival has started.",
-                 "pull": {"place": "plaza", "weight": 1.6}}
+                 "pull": {"place": "plaza", "weight": 1.6}, "recap": "A surprise festival filled Fountain Plaza"}
         return event, {}
 
     if preset == "rumor":
@@ -122,7 +125,8 @@ def build(world, preset: str, *, target: str | None = None, place: str | None = 
                  "target_name": name(rid), "topic": f"the rumor about {name(rid)}",
                  "text": f"A rumor is going around the island: {about}.",
                  "personal": {rid: f"People all over the island are saying that {first_person_secret(pred)}."},
-                 "rumor": {"about": rid, "text": about + "."}}
+                 "rumor": {"about": rid, "text": about + "."},
+                 "recap": f"A rumor that {about} swept the island"}
         return event, {}
 
     # fired
@@ -133,7 +137,8 @@ def build(world, preset: str, *, target: str | None = None, place: str | None = 
     event = {"title": f"{name(rid)} lost their job", "kind": "fired", "place": None, "minutes": 300,
              "target_name": name(rid), "topic": f"{name(rid)} losing their job",
              "text": f"Word went around the island that {name(rid)} lost their job at the {pname}.",
-             "personal": {rid: f"I was told today that I no longer have my job at the {pname}. I handed back my keys."}}
+             "personal": {rid: f"I was told today that I no longer have my job at the {pname}. I handed back my keys."},
+             "recap": f"{name(rid)} lost their job at the {pname}"}
     return event, {"fire_job": rid}
 
 

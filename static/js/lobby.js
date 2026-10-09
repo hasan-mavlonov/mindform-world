@@ -5,39 +5,57 @@ const PALETTE = ['#f4a6c8', '#ffb565', '#84cffa', '#acf2a9', '#d7b4ff', '#ffe08a
 
 // A cast with built-in friction, for "Surprise me". Bios carry temperament cues (for MindForm's
 // genesis); levels are the same people as sliders (for offline, where genesis is keyword-based).
+// Secrets complete "<name> …"; voices are a few words on how they talk (quotes = catchphrases).
 const SAMPLE_CAST = [
-  { name: 'Aya', job: 'baker', goal: 'save enough to open her own bakery',
+  { name: 'Aya', job: 'baker', goal: 'leave the island for good',
+    secret: "has already bought a one-way ferry ticket and hasn't told anyone",
+    voice: 'warm, nervous, apologises too much',
     bio: 'Aya Tanaka, 27, a warm but anxious baker from Osaka who moved to the island after a painful breakup. Generous, eager to please, easily hurt by criticism.',
     identity: { age: '27', gender: 'woman', origin: 'Osaka, Japan', language: 'Japanese', family: 'only child, close to her mother' }, levels: { O: 4, C: 3, E: 4, A: 5, N: 4 } },
-  { name: 'Rex', job: 'boatbuilder', goal: 'win the contract to build the new pier',
+  { name: 'Rex', job: 'boatbuilder', goal: 'get off the island on his own terms',
+    secret: 'is secretly building a boat to leave the island',
+    voice: 'gruff, dry, says "lad"',
     bio: 'Rex Calloway, 34, a blunt, proud boatbuilder who grew up on fishing boats in Hull. Disciplined and stubborn, distrusts newcomers, rarely says sorry.',
     identity: { age: '34', gender: 'man', origin: 'Hull, England', language: 'English', family: 'raised by a fisherman father' }, levels: { O: 2, C: 4, E: 2, A: 1, N: 2 } },
-  { name: 'Mira', job: 'librarian', goal: 'find out who left the note in the old book',
-    bio: 'Mira Duarte, 29, a shy, observant librarian from Lisbon who writes poems nobody has read. Curious and imaginative, sensitive, avoids confrontation.',
-    identity: { age: '29', gender: 'woman', origin: 'Lisbon, Portugal', language: 'Portuguese', religion: 'Catholic', family: 'two older brothers' }, levels: { O: 5, C: 4, E: 1, A: 4, N: 4 } },
-  { name: 'Leo', job: 'none', goal: 'be liked by everyone on the island',
-    bio: 'Leo Okafor, 22, a restless, outgoing surfer from Lagos who dropped out of university and came to the island on a whim. Funny, impulsive, hates being alone.',
-    identity: { age: '22', gender: 'man', origin: 'Lagos, Nigeria', language: 'English, Yoruba', family: 'big family, the youngest' }, levels: { O: 4, C: 1, E: 5, A: 4, N: 3 } },
-  { name: 'Ines', job: 'nurse', goal: 'get her estranged son to visit',
+  { name: 'Ines', job: 'nurse', goal: 'keep her job at the clinic',
+    secret: "mixed up two patients' charts and is hiding it",
+    voice: 'formal, precise, kind underneath',
     bio: 'Ines Varga, 41, the island nurse, from Budapest. Calm and dutiful, quietly exhausted, widowed two years ago. Keeps her worries to herself.',
     identity: { age: '41', gender: 'woman', origin: 'Budapest, Hungary', language: 'Hungarian', family: 'widowed, one adult son' }, levels: { O: 3, C: 5, E: 2, A: 4, N: 3 } },
+  { name: 'Leo', job: 'none', goal: 'be liked by everyone on the island',
+    secret: 'was expelled from university for cheating, not a dropout like he tells everyone',
+    voice: 'cheeky, loud, says "mate" a lot',
+    bio: 'Leo Okafor, 22, a restless, outgoing surfer from Lagos who dropped out of university and came to the island on a whim. Funny, impulsive, hates being alone.',
+    identity: { age: '22', gender: 'man', origin: 'Lagos, Nigeria', language: 'English, Yoruba', family: 'big family, the youngest' }, levels: { O: 4, C: 1, E: 5, A: 4, N: 3 } },
+  { name: 'Mira', job: 'librarian', goal: 'find out who left the note in the old book',
+    secret: 'wrote the anonymous note pinned to the Town Hall door',
+    voice: 'dreamy, poetic, shy',
+    bio: 'Mira Duarte, 29, a shy, observant librarian from Lisbon who writes poems nobody has read. Curious and imaginative, sensitive, avoids confrontation.',
+    identity: { age: '29', gender: 'woman', origin: 'Lisbon, Portugal', language: 'Portuguese', religion: 'Catholic', family: 'two older brothers' }, levels: { O: 5, C: 4, E: 1, A: 4, N: 4 } },
   { name: 'Tomasz', job: 'keeper', goal: 'stop the council from automating the lighthouse',
+    secret: 'has been leaving the lighthouse lamp off on some nights',
+    voice: 'gruff, superstitious, few words',
     bio: 'Tomasz Nowak, 58, the gruff, solitary lighthouse keeper. Superstitious, set in his ways, kind underneath. Has lived on the island for thirty years.',
     identity: { age: '58', gender: 'man', origin: 'Gdansk, Poland', language: 'Polish', religion: 'Catholic', family: 'never married' }, levels: { O: 2, C: 4, E: 1, A: 3, N: 3 } },
   { name: 'Sana', job: 'clerk', goal: 'be elected mayor at the next vote',
+    secret: 'forged the mayor\'s signature on a council permit',
+    voice: 'confident, polished, a little cutting',
     bio: 'Sana Mirza, 31, the ambitious town clerk from Karachi. Organized, competitive, confident in public, privately afraid of failing.',
     identity: { age: '31', gender: 'woman', origin: 'Karachi, Pakistan', language: 'Urdu, English', religion: 'Muslim', family: 'eldest of four' }, levels: { O: 3, C: 5, E: 4, A: 2, N: 3 } },
   { name: 'Jonah', job: 'fisher', goal: 'pay back the money he owes before anyone finds out',
+    secret: 'owes money to dangerous people on the mainland',
+    voice: 'easygoing, funny, dodges hard questions',
     bio: 'Jonah Reyes, 25, an easygoing, funny fisher who owes money to the wrong people back on the mainland. Charming, avoids hard conversations.',
     identity: { age: '25', gender: 'man', origin: 'Cebu, Philippines', language: 'Cebuano, English', family: 'sends money home to his mother' }, levels: { O: 3, C: 2, E: 4, A: 4, N: 3 } },
 ];
+const DRAMA_CAST = ['Aya', 'Rex', 'Ines', 'Leo', 'Mira'];
 
 export class Lobby {
   constructor({ onOpen }) {
     this.onOpen = onOpen;
     this.step = 1;
     this.status = null;
-    this.state = { version: null, brain: 'rules', mind: 'offline', drama: '2', residents: [] };
+    this.state = { version: null, brain: 'rules', mind: 'offline', drama: '2', voices: 'styled', residents: [] };
     this.$ = sel => document.querySelector(sel);
     this.$('#wiz-next').addEventListener('click', () => this.next());
     this.$('#wiz-back').addEventListener('click', () => this.go(this.step - 1));
@@ -45,7 +63,8 @@ export class Lobby {
     this.$('#w-pace').addEventListener('input', () => this.paceText());
     this.$('#r-add').addEventListener('click', () => { this.addResident(); });
     this.$('#r-surprise').addEventListener('click', () => this.surprise());
-    for (const [sel, key] of [['#w-brain', 'brain'], ['#w-mind', 'mind'], ['#w-drama', 'drama']]) {
+    this.$('#r-drama').addEventListener('click', () => this.dramaCast());
+    for (const [sel, key] of [['#w-brain', 'brain'], ['#w-mind', 'mind'], ['#w-drama', 'drama'], ['#w-voices', 'voices']]) {
       this.$(sel).addEventListener('click', e => {
         const b = e.target.closest('button');
         if (!b || b.disabled) return;
@@ -113,7 +132,7 @@ export class Lobby {
   segs() {
     const llmOk = this.status?.llm.available;
     const v = this.version;
-    for (const [sel, key] of [['#w-brain', 'brain'], ['#w-mind', 'mind'], ['#w-drama', 'drama']]) {
+    for (const [sel, key] of [['#w-brain', 'brain'], ['#w-mind', 'mind'], ['#w-drama', 'drama'], ['#w-voices', 'voices']]) {
       for (const b of this.$(sel).querySelectorAll('button')) {
         b.disabled = (b.dataset.v === 'llm' && !llmOk) || (key === 'mind' && b.dataset.v === 'llm' && v && !v.supports_llm);
         b.classList.toggle('active', b.dataset.v === this.state[key]);
@@ -126,6 +145,9 @@ export class Lobby {
       ? 'MindForm reads each experience with its LLM (the path you use in the console).'
       : "MindForm's offline fallbacks: lexicon / trained head appraisal, rule-based voice. Fast, free, cruder.";
     if (!llmOk) this.$('#w-mind-hint').textContent += ' (No API key found: set GEMINI_API_KEY in .env here or in MindForm v0.)';
+    this.$('#w-voices-hint').textContent = this.state.voices === 'styled'
+      ? 'MindForm decides how each moment lands; every resident says it in their own words (from their traits and voice). No two residents share a phrase, nobody repeats themselves.'
+      : "Residents say MindForm's reply word for word (offline v0 replies are formulaic). For experiments on the raw output.";
   }
 
   paceText() {
@@ -156,7 +178,7 @@ export class Lobby {
   // ---- residents -------------------------------------------------------------------
   blankResident(i) {
     return { mode: this.state.mind === 'offline' ? 'manual' : 'bio', name: '', bio: '', identity: {},
-             levels: { O: 3, C: 3, E: 3, A: 3, N: 3 }, job: 'none', goal: '', color: PALETTE[i % PALETTE.length] };
+             levels: { O: 3, C: 3, E: 3, A: 3, N: 3 }, job: 'none', goal: '', secret: '', voice: '', color: PALETTE[i % PALETTE.length] };
   }
 
   addResident(render = true) {
@@ -169,11 +191,21 @@ export class Lobby {
     const pool = [...SAMPLE_CAST].sort(() => Math.random() - 0.5);
     const n = Math.max(3, Math.min(this.state.residents.length || 5, 8));
     const mode = this.state.mind === 'offline' ? 'manual' : 'bio';
-    this.state.residents = pool.slice(0, n).map((c, i) => ({
-      mode, name: c.name, bio: c.bio, identity: { name: c.name, ...c.identity }, levels: { ...c.levels },
-      job: c.job, goal: c.goal, color: PALETTE[i % PALETTE.length],
-    }));
+    this.state.residents = pool.slice(0, n).map((c, i) => this.fromSample(c, i, mode));
     this.renderResidents();
+  }
+
+  dramaCast() {        // the cast the Reels series opens with: everyone is hiding something
+    const mode = this.state.mind === 'offline' ? 'manual' : 'bio';
+    this.state.residents = DRAMA_CAST.map((n, i) => this.fromSample(SAMPLE_CAST.find(c => c.name === n), i, mode));
+    this.state.drama = '3';
+    this.segs();
+    this.renderResidents();
+  }
+
+  fromSample(c, i, mode) {
+    return { mode, name: c.name, bio: c.bio, identity: { name: c.name, ...c.identity }, levels: { ...c.levels },
+             job: c.job, goal: c.goal, secret: c.secret || '', voice: c.voice || '', color: PALETTE[i % PALETTE.length] };
   }
 
   renderResidents() {
@@ -210,9 +242,14 @@ export class Lobby {
       }
       const jobSel = el('select', { onchange: e => { r.job = e.target.value; } },
         jobs.map(j => el('option', { value: j.id, selected: j.id === r.job }, j.title + (j.hours ? ` (${j.hours[0]}–${j.hours[1]}h)` : ''))));
+      const who = (r.identity.name || r.name || 'They').trim() || 'They';
       card.append(el('div', { class: 'rcard-grid' },
         el('label', {}, 'Life on the island', jobSel),
-        el('label', {}, 'What they want right now', el('input', { value: r.goal, maxlength: 200, placeholder: 'optional', oninput: e => { r.goal = e.target.value; } }))));
+        el('label', {}, 'What they want (goal)', el('input', { value: r.goal, maxlength: 200, placeholder: 'leave the island for good', oninput: e => { r.goal = e.target.value; } }))));
+      card.append(el('label', { class: 'secret-field' }, el('span', {}, '🤫 Secret ', el('small', {}, `finish the sentence: "${who} …" (others can find out)`)),
+        el('input', { value: r.secret, maxlength: 200, placeholder: 'is secretly building a boat to leave the island', oninput: e => { r.secret = e.target.value; } })));
+      card.append(el('label', {}, el('span', {}, '🗣 Voice ', el('small', {}, 'how they talk; quote catchphrases (optional)')),
+        el('input', { value: r.voice, maxlength: 200, placeholder: 'dry, sarcastic, says "mate" a lot', oninput: e => { r.voice = e.target.value; } })));
       box.append(card);
     });
     this.$('#r-add').disabled = this.state.residents.length >= 10;
@@ -234,8 +271,10 @@ export class Lobby {
       seed: Number(this.$('#w-seed').value) || 431,
       experiences_per_hour: Number(this.$('#w-pace').value),
       intensity: Number(this.state.drama),
+      voices: this.state.voices,
       characters: residents.map(r => ({
         mode: r.mode, name: r.name.trim(), bio: r.bio.trim(), job: r.job, goal: r.goal.trim(), color: r.color,
+        secret: (r.secret || '').trim(), voice: (r.voice || '').trim(),
         identity: r.mode === 'manual' ? { ...r.identity, name: (r.identity.name || r.name).trim() } : {},
         levels: r.mode === 'manual' ? r.levels : {},
       })),

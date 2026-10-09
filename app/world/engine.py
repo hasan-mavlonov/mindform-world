@@ -61,8 +61,8 @@ DWELL = {"event": 2.6, "letter": 2.6, "weather": 2.0, "inject": 1.8, "bond": 1.8
          "secret": 3.0, "shift": 2.6, "recap": 7.0}
 AFFINITY_RATE = 0.2              # how far one encounter's valence (MindForm's reading) moves affection
 TRAIT_SMOOTH = 0.15              # traits on screen follow MindForm through a slow moving average...
-SHIFT_STEP = 0.07                # ...and a card plays when the average has moved this far since the last card
-SHIFT_COOLDOWN = 8               # beats between two cards for the same resident
+SHIFT_STEP = 0.09                # ...and a card plays when the average has moved this far since the last card
+SHIFT_COOLDOWN = 16              # beats between two cards for the same resident (about four island hours)
 SHIFT_REVERSAL = 2.0             # turning back the other way needs this many times the move...
 REVERSAL_COOLDOWN = 32           # ...and this many beats since that trait's last card
 PASS_DISTANCE = 1.5              # two walkers this close at the same moment cross paths
@@ -613,6 +613,7 @@ class World:
             spec, effects = presets.build(self, name, target=target, place=place, rng=rng)
             follow = spec.pop("follow", None)
             rumor = spec.pop("rumor", None)
+            spec["recap"] = spec.get("recap")
             spec.update(start=self.clock, end=self.clock + spec.pop("minutes"), force=True)
             if effects.get("weather"):
                 if self.weather != effects["weather"]:
@@ -642,8 +643,7 @@ class World:
                         self._learn_secret(o, holder, "letter", announce=False)
                 self.emit("secret", f"Everyone now knows: {intrigue.reveal_text(holder.name, holder.secret)}",
                           actor=holder.id, mode="exposed", drama=3, dwell=3.2)
-            self._highlight(3, spec["title"] if not effects.get("expose") else
-                            f"An anonymous letter exposed {self.residents[effects['expose']].name}", [])
+            self._highlight(3, spec.get("recap") or spec["title"], [])
             return {"event": self._event_public(event), "preset": name}
 
     # ---- the beat ---------------------------------------------------------------------
@@ -1250,6 +1250,7 @@ class World:
         return {"items": items, "talk": talk, "brushoff": brushoff, "addressed_by": addressed_by,
                 "levels": level, "dest": dest, "actions": actions, "lines": lines, "topics": topics,
                 "forced": {rid: e["id"] for rid, e in forced.items()}, "forced_topic": {rid: e.get("topic") for rid, e in forced.items()},
+                "forced_self": {rid: e.get("preset") or e["kind"] for rid, e in forced.items() if rid in (e.get("personal") or {})},
                 "passing": passing, "salient": salient}
 
     def _conversation_effects(self, speaker: Resident, listener: Resident, topic: dict, *, heard: bool) -> None:
@@ -1424,6 +1425,10 @@ class World:
                 plan.setdefault("slips", {})[rid] = to_id
         elif role == "react":
             roles = [f"react:{key}", f"react:{fam}", "react:neutral"]
+            mine = (plan.get("forced_self") or {}).get(rid)          # the news is about them
+            if mine:
+                roles = [f"react:self:{mine}:{fam}", f"react:self:{mine}:neutral"] + roles
+                ctx["intent"] = f"the news is about them ({mine})"
         else:
             if fam == "neutral" and not strong and rng.random() < 0.35 and not (r.secret and r.place == r.secret["place"]):
                 return None, "silent", role                   # nothing much on their mind
@@ -1468,14 +1473,22 @@ class World:
                           "place_name": self.place_name(r.place)}
             text, narr_source = narrator.narrate(items, header, use_llm=self.brain == "llm", stats=self.stats)
             turn, error = self._experience(r, text)
+            return rid, items, text, narr_source, turn, error
+
+        def voice_one(result):
+            rid, items, text, narr_source, turn, error = result
             spoken, voice_source, role = self._voice_reply(rid, plan, turn, replies) if turn else (None, "none", "inner")
             return rid, items, text, narr_source, turn, error, spoken, voice_source, role
 
+        llm_voices = self.voice_mode == "styled" and self.brain == "llm" and llm.available()
         for lv in sorted(by_level):
-            members = by_level[lv]
+            members = sorted(by_level[lv])
             with ThreadPoolExecutor(max_workers=max(1, min(8, len(members)))) as pool:
-                results = list(pool.map(live_one, members))
-            for rid, items, text, narr_source, turn, error, spoken, voice_source, role in results:
+                results = list(pool.map(live_one, members))            # narrate + MindForm, in parallel
+                # Words in a fixed order (the guard reads everyone's recent lines, so offline the same
+                # seed gives the same lines); in parallel only when the model writes them.
+                voiced = list(pool.map(voice_one, results)) if llm_voices and len(results) > 1 else [voice_one(x) for x in results]
+            for rid, items, text, narr_source, turn, error, spoken, voice_source, role in voiced:
                 replies[rid] = spoken if spoken is not None else (turn.reply if turn else None)
                 self._settle(rid, items, text, narr_source, turn, error, plan,
                              spoken=spoken, voice_source=voice_source, role=role)

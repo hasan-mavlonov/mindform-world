@@ -66,7 +66,8 @@ SECRET_KINDS: dict[str, dict] = {
         "admit": ["Yes. I mixed them up. I fixed it. I should have said.", "It was one night. I was exhausted. Yes, it was me."],
     },
     "ticket": {
-        "match": r"ticket|one-way|ferry|mainland|leav|quit|move away|go back home", "place": "dock", "short": "the ticket", "hours": (9, 18),
+        "match": r"ticket|one-way|ferry|mainland|leave the island|leaving the island|quit|move away|go back home",
+        "place": "dock", "short": "the ticket", "hours": (9, 18),
         "cover": "watching the ferry come in",
         "work": ["I checked the ferry timetable on the dock board and touched the ticket in my coat pocket.",
                  "I asked the ferry office, quietly, whether a one-way ticket can be changed to an earlier date.",
@@ -94,6 +95,60 @@ SECRET_KINDS: dict[str, dict] = {
         "deny": ["Money trouble? Me? I'm fine.", "That's nobody's business."],
         "admit": ["Yes, I owe money. A lot. I'm handling it.", "Fine. I'm broke and in trouble. Happy?"],
     },
+    "lamp": {
+        "match": r"lamp|lighthouse|light off|beacon", "place": "lighthouse", "short": "the lamp", "hours": (19, 23),
+        "cover": "checking the lighthouse",
+        "work": ["I climbed to the lamp room, switched the lamp off for an hour and sat in the dark listening to the sea.",
+                 "I wrote 'lamp lit, all normal' in the lighthouse log for a night when it was not."],
+        "clue": ["The lighthouse beam went dark for an hour while {name} was up in the lamp room.",
+                 "{name} tore a page out of the lighthouse log and put it in their pocket."],
+        "inner": ["The sea's quieter in the dark.", "Nobody checks the log. Nobody but me."],
+        "slip": ["A lamp's just a lamp. Ships manage.", "Who says it has to burn every night?"],
+        "confide": ["Some nights I switch the lamp off. I can't explain it. I just do.",
+                    "The lighthouse has been dark some nights. That was me."],
+        "deny": ["The lamp's never missed a night. Check the log.", "Mind your own light."],
+        "admit": ["Yes. I turned it off. More than once.", "Aye. The dark ones were me."],
+    },
+    "forgery": {
+        "match": r"forg|signature|permit|fake|falsif", "place": "town_hall", "short": "the permit", "hours": (9, 18),
+        "cover": "staying late at the Town Hall",
+        "work": ["I took the permit file home from the Town Hall and practised the mayor's signature on scrap paper, then burned the scraps.",
+                 "I moved the forged permit to the bottom of the council's filing tray."],
+        "clue": ["{name} was alone in the Town Hall records room, putting a permit back in the wrong drawer.",
+                 "{name} burned a sheet of paper covered in the same signature, over and over, in the plaza bin."],
+        "inner": ["One signature. It was only one signature.", "If the mayor looks closely…"],
+        "slip": ["Signatures all look the same anyway, don't they?", "Paperwork's paperwork. Nobody reads it."],
+        "confide": ["I signed the mayor's name on a permit. It's fake. Nobody knows.",
+                    "That pier permit? I forged it. I needed it through."],
+        "deny": ["That permit is entirely in order.", "Are you accusing me of something?"],
+        "admit": ["Yes. I signed it myself. It had to go through.", "It's forged. I'd do it again."],
+    },
+    "note": {
+        "match": r"anonymous|wrote the note|the note|letter about", "place": "library", "short": "the note", "hours": (8, 20),
+        "cover": "writing in the reading room",
+        "work": ["I wrote another unsigned note in the reading room, in capitals so nobody would know the handwriting.",
+                 "I hid the ink and the spare paper behind the encyclopaedias in the library."],
+        "clue": ["{name} was writing in capitals in the reading room and covered the page when people walked by.",
+                 "{name} had ink on their fingers the same colour as the note on the Town Hall door."],
+        "inner": ["They'll never guess it was me.", "Someone had to say it."],
+        "slip": ["Whoever wrote that note had a point, didn't they?", "Capitals are hard to trace. Or so I've read."],
+        "confide": ["The note on the Town Hall door… I wrote it.", "It was me. The anonymous note. I couldn't stay quiet."],
+        "deny": ["I don't write notes. I shelve books.", "Why would I write something like that?"],
+        "admit": ["Yes. I wrote it. Every word.", "It was me. Someone had to."],
+    },
+    "past": {
+        "match": r"expell|cheat|universit|degree|diploma|lied about|criminal|prison|record", "place": None,
+        "short": "the past", "hours": (8, 22), "cover": "keeping to themselves",
+        "work": ["I read the old letter from the university again, then folded it back into the bottom of my bag.",
+                 "I practised the story I tell people about why I left, out loud, until it sounded natural."],
+        "clue": ["{name} changed the story about why they left the mainland — it was different from last time.",
+                 "{name} quickly stuffed an official-looking letter into their bag when someone came near."],
+        "inner": ["Same story. Keep it the same story.", "Nobody here knows. Keep it that way."],
+        "slip": ["Not everyone leaves school because they want to. Hypothetically.", "Universities are a scam anyway. Trust me."],
+        "confide": ["I didn't drop out. I got thrown out. For cheating.", "I lied about why I left. I was expelled."],
+        "deny": ["I left because I wanted to. End of.", "Who's been talking about me?"],
+        "admit": ["Yeah. They kicked me out. Happy?", "It's true. I cheated, and they caught me."],
+    },
     "generic": {
         "match": r"", "place": None, "short": "what I'm hiding", "hours": (8, 22),
         "cover": "keeping to themselves",
@@ -108,7 +163,7 @@ SECRET_KINDS: dict[str, dict] = {
         "admit": ["…It's true. All of it.", "Yes. Now you know."],
     },
 }
-_KIND_ORDER = ["boat", "charts", "debt", "ticket"]
+_KIND_ORDER = ["boat", "charts", "lamp", "forgery", "note", "debt", "past", "ticket"]
 
 
 def secret_kind(text: str) -> str:
@@ -147,8 +202,15 @@ def first_person_secret(text: str) -> str:
     for a, b in (("is ", "I'm "), ("has ", "I have "), ("was ", "I was "), ("owes ", "I owe "), ("hides ", "I hide "),
                  ("lied ", "I lied "), ("stole ", "I stole ")):
         if t.startswith(a):
-            return b + t[len(a):]
-    return "I " + t
+            t = b + t[len(a):]
+            break
+    else:
+        t = "I " + t
+    for a, b in ((" and is ", " and am "), (" and has ", " and have "), (" and hasn't ", " and haven't "),
+                 (" and isn't ", " and am not "), (" he tells", " I tell"), (" she tells", " I tell"),
+                 (" they tell", " I tell")):
+        t = t.replace(a, b)
+    return t
 
 
 _SWAPS = {"her": "my", "his": "my", "their": "my", "he": "I", "she": "I", "they": "I", "him": "me",

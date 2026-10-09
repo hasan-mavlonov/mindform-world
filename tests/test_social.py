@@ -436,3 +436,20 @@ def test_social_state_survives_a_restart(manager):
         assert twin.secret == r.secret and twin.knowledge == r.knowledge and twin.voice == r.voice
         assert twin.relationships == r.relationships
     assert loaded.voices.claims == world.voices.claims
+
+
+def test_rules_offline_is_still_reproducible(tmp_path):
+    """Voices, encounters and secrets are all seeded: same seed, same lines."""
+    runs = []
+    for i in range(2):
+        m = WorldManager(tmp_path / f"run{i}")
+        try:
+            world = m.create(control_setup(characters=DRAMA, seed=5), background=False)
+            world.preset("rumor", target="rex")
+            for _ in range(24):
+                world.run_beat()
+            rows = [json.loads(x) for x in (world.dir / "experiences.jsonl").read_text().splitlines()]
+            runs.append([(r["resident"], r["experience"], r.get("spoken")) for r in rows])
+        finally:
+            m.shutdown()
+    assert runs[0] == runs[1]

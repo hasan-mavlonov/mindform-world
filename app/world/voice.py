@@ -285,6 +285,41 @@ T: dict[str, list[str]] = {
     "react:fear": ["anxious|Somebody do something!", "|I don't like this. I don't like this at all.", "gruff|Stay away from it."],
     "react:angry": ["blunt|Who did this?!", "|This is a disgrace.", "bold|Someone's going to answer for this."],
     "react:surprise": ["|{Topic}?! Since when?", "chatty|Oh my gosh — {topic}!", "dry|Well. Didn't have that on my list."],
+    # --- reacting when the big news is about YOU (god mode presets); MindForm's feeling picks the pool
+    "react:self:expose:pos": ["|Fine. It's true. And honestly? It's a relief.", "bold|Yes, it's true. What of it?", "dry|Well. Saves me announcing it.",
+                              "warm|I'm sorry you all had to find out like this.", "chatty|Okay, okay, YES, it's true!", "gruff|So now you know.",
+                              "formal|It is true. I will answer for it.", "playful|Surprise?", "dreamy|Maybe it was always going to come out.",
+                              "anxious|Oh god. Okay. It's out. It's actually out."],
+    "react:self:expose:neg": ["|Who wrote this?!", "anxious|No. No no no. Who did this?", "blunt|Whoever wrote this — I'll find you.",
+                              "gruff|Cowards. Not even a name.", "dry|Lovely. Anonymous and everything.", "warm|Please — let me explain.",
+                              "formal|This is a violation.", "chatty|Who would DO this?!", "bold|Fine. Come and say it to my face.",
+                              "dreamy|Everything I built, gone in one letter.", "playful|Wow. Okay. Cool cool cool."],
+    "react:self:expose:neutral": ["|So… now everyone knows.", "gruff|It's out, then.", "dry|Well. That happened.",
+                                  "formal|I suppose there's no point denying it.", "anxious|Everyone's looking at me.",
+                                  "warm|I should have said something sooner.", "bold|Fine. Let them read it."],
+    "react:self:fired:pos": ["|Honestly? I hated that job.", "bold|Their loss.", "playful|Free at last!", "dry|Best news all week.",
+                             "dreamy|Maybe this is a door opening.", "chatty|You know what? Good!"],
+    "react:self:fired:neg": ["|What am I supposed to do now?", "anxious|How do I pay rent now?", "blunt|After everything I did for them?",
+                             "gruff|Years. Years I gave that place.", "warm|I'll be fine. I'll be fine.", "formal|This is entirely unjust.",
+                             "chatty|Fired?! Me?!", "dry|Fantastic. Unemployed on an island."],
+    "react:self:fired:neutral": ["|Well. That's that.", "gruff|Hm. Right.", "dry|Unemployed. Wonderful.", "formal|I'll collect my things.",
+                                 "dreamy|One door closes…", "anxious|Okay. Okay. What now?"],
+    "react:self:rumor:pos": ["|Ha! Let them talk.", "playful|Honestly, I'm flattered.", "bold|Good. Keep them guessing.", "dry|Finally, I'm interesting.",
+                             "chatty|Wait, people talk about me?"],
+    "react:self:rumor:neg": ["|That's a lie! Who's saying that?", "anxious|That's not true. Is that what people think of me?",
+                             "blunt|Whoever started this, stop.", "gruff|Lies. All of it.", "warm|Why would anyone say that about me?",
+                             "formal|That is slander.", "chatty|What?! That's completely made up!", "dry|Oh, wonderful. Fiction."],
+    "react:self:rumor:neutral": ["|People will say anything.", "dry|Well. That's creative.", "gruff|Let them talk.", "formal|I won't dignify that.",
+                                 "dreamy|Rumors are just weather."],
+    "react:self:stranger:pos": ["|Someone's asking for me? Interesting.", "bold|Let them come.", "chatty|Ooh, a mystery visitor!",
+                                "playful|Finally, my fans have arrived."],
+    "react:self:stranger:neg": ["|Nobody's supposed to know I'm here.", "anxious|Why would a stranger want me?", "gruff|Send them back to the ferry.",
+                                "blunt|I'm not seeing anyone.", "dry|Oh good. A man in a coat.", "warm|Did they say what they want?"],
+    "react:self:stranger:neutral": ["|Asking for me? Who?", "formal|I don't know any stranger.", "dreamy|The sea brings strange visitors.",
+                                    "gruff|Hm. Let them ask."],
+    "react:self:fire:neg": ["|My workplace! Everything's in there!", "anxious|Is everyone out? Is everyone out?!", "bold|Get the buckets! Move!",
+                            "gruff|Not the yard. Not the yard.", "blunt|Water! Now!", "warm|Please tell me nobody's inside!"],
+    "react:self:fire:neutral": ["|My workplace… it's burning.", "formal|We need the bucket line, now.", "dry|Of course it's mine."],
     # --- gossip, secrets, confrontations
     "reply:gossip:pos": ["chatty|No! Tell me more!", "playful|Ooh, scandal.", "|Huh. Didn't know that.", "dry|Riveting. Go on."],
     "reply:gossip:neg": ["warm|That's not ours to talk about.", "blunt|Stop spreading that.", "|I'd rather not hear it.", "anxious|Should we be talking about this?"],
@@ -422,6 +457,8 @@ class VoiceBook:
         no two residents can ever say the same template phrase."""
         order = sorted(residents, key=lambda r: hashlib.md5(f"{self.seed}:{r.id}".encode()).hexdigest())
         for role, entries in T.items():
+            if role.startswith("react:self:"):          # for whoever the news is about: claimed on use
+                continue
             count = {r.id: 0 for r in order}
             for entry in entries:
                 ttags, text = _parse(entry)
