@@ -6,5 +6,6 @@ __pycache__/
 .env
 .DS_Store
 data/*.db
+data/worlds/
 node_modules/
 dist/

@@ -3,38 +3,194 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MindForm World — Living Simulation</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <title>MindForm World</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%E2%9C%B3%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/css/app.css" />
   <script type="importmap">
-    {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}
+    {"imports": {"three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+                 "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}
   </script>
 </head>
 <body>
-  <main class="app">
-    <div id="world-container"><canvas id="world"></canvas><div class="corner-note">DRAG TO ORBIT · SCROLL TO ZOOM · CLICK AN AGENT</div></div>
-    <header class="topbar">
-      <div class="brand"><div class="brand-icon">✳</div><div><div class="brand-name">MIND<span>FORM</span> <em>WORLD</em></div><div class="brand-subtitle">Personality-driven agent simulation</div></div></div>
-      <div class="status"><span class="online-dot"></span><span>SIMULATION ONLINE</span><span class="divider">/</span><span id="mode">DETERMINISTIC v0.1</span></div>
-      <div class="top-actions"><a href="https://mindform-ai.com" target="_blank" rel="noopener noreferrer">MIND FORM ↗</a></div>
+  <div id="stage">
+    <canvas id="world"></canvas>
+    <div id="overlay"></div>
+  </div>
+
+  <!-- ============ LOBBY: pick a mind, set the world up, birth the residents ============ -->
+  <section id="lobby" class="screen">
+    <header class="lobby-head">
+      <div class="brand"><span class="brand-mark">✳</span><div><b>MIND<span>FORM</span></b> <em>WORLD</em>
+        <small>A living island where MindForm residents are raised by what happens to them</small></div></div>
+      <div id="llm-status" class="pill">checking LLM…</div>
     </header>
-    <section class="left-panel panel">
-      <div class="panel-header"><span>WORLD OVERVIEW</span><span class="small-dot">●</span></div>
-      <div class="big-number" id="tick">0000</div><div class="metric-label">SIMULATION TICKS</div>
-      <div class="metrics"><div><strong id="agent-count">05</strong><small>ACTIVE AGENTS</small></div><div><strong id="visit-count">00</strong><small>LOCATION VISITS</small></div></div>
-      <div class="section-header">RESIDENTS <span id="resident-count">05 ONLINE</span></div>
-      <div id="agent-list" class="agent-list"></div>
-      <div class="section-header">EXPERIMENT STATUS <span>ALPHA</span></div>
-      <div class="info-card"><b>Personality Lab</b><p>Observe decisions, movement and social interaction. Model-powered reasoning is the next integration.</p></div>
-    </section>
-    <section class="right-panel panel">
-      <div class="panel-header"><span>AGENT INSPECTOR</span><span>↗</span></div>
-      <div id="inspector"><div class="placeholder"><div class="placeholder-icon">◇</div><b>Select an agent</b><p>Click a character in the world or the residents list to inspect their personality and memory.</p></div></div>
-      <div class="section-header feed-title">LIVE ACTIVITY <span id="event-count">0 EVENTS</span></div>
-      <div class="event-list" id="events"></div>
-    </section>
-    <footer class="controls"><div class="control-label">WORLD CONTROL <span id="run-state">RUNNING</span></div><button id="toggle" class="control primary">Ⅱ Pause</button><button id="step" class="control">+1 tick</button><button id="speed" class="control">1× SPEED</button><button id="reset" class="control danger">↺ Reset</button><div class="control-tip">WEBGL · REAL-TIME INTERPOLATION</div></footer>
-    <div id="error" class="error hidden"></div>
-  </main>
-  <script type="module" src="/static/world.js"></script>
+
+    <div class="lobby-body">
+      <aside class="saved card">
+        <h3>Your worlds</h3>
+        <div id="saved-list" class="saved-list"><p class="muted">No worlds yet.</p></div>
+      </aside>
+
+      <main class="wizard card">
+        <ol class="steps">
+          <li data-step="1" class="active"><span>1</span>Mind</li>
+          <li data-step="2"><span>2</span>World</li>
+          <li data-step="3"><span>3</span>Residents</li>
+        </ol>
+
+        <div class="step" data-step="1">
+          <h2>Which mind will your residents have?</h2>
+          <p class="muted">Every resident is raised by this engine: the world only produces events, the mind decides who they become.</p>
+          <div id="versions" class="versions"></div>
+        </div>
+
+        <div class="step hidden" data-step="2">
+          <h2>Set up the world</h2>
+          <div class="form-grid">
+            <label>World name<input id="w-name" value="Halcyon Isle" maxlength="60" /></label>
+            <label>Seed <small>same seed + rules = same world</small>
+              <div class="row"><input id="w-seed" type="number" value="431" /><button class="ghost" id="w-dice" type="button" title="Random seed">🎲</button></div></label>
+            <div class="field">
+              <span>World brain <small>plans actions, narrates, invents events</small></span>
+              <div class="seg" id="w-brain"><button data-v="llm">LLM</button><button data-v="rules">Rules</button></div>
+              <small class="hint" id="w-brain-hint"></small>
+            </div>
+            <div class="field">
+              <span>MindForm reads experiences with <small>(the residents' minds)</small></span>
+              <div class="seg" id="w-mind"><button data-v="llm">LLM (API)</button><button data-v="offline">Offline fallback</button></div>
+              <small class="hint" id="w-mind-hint"></small>
+            </div>
+            <div class="field">
+              <span>Experiences per hour <b id="w-pace-v">4</b></span>
+              <input id="w-pace" type="range" min="3" max="6" value="4" />
+              <small class="hint">Each one is a stretch of <b id="w-pace-min">15</b> island minutes, fed to the mind as one experience.</small>
+            </div>
+            <div class="field">
+              <span>Drama</span>
+              <div class="seg" id="w-drama"><button data-v="1">Calm</button><button data-v="2">Lively</button><button data-v="3">Dramatic</button></div>
+              <small class="hint">How often incidents strike, and how hard (letters, storms, crises).</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="step hidden" data-step="3">
+          <div class="residents-head">
+            <h2>Who lives here?</h2>
+            <div class="row">
+              <button class="ghost" id="r-surprise" type="button">✦ Surprise me</button>
+              <button class="ghost" id="r-add" type="button">+ Add resident</button>
+            </div>
+          </div>
+          <p class="muted" id="r-hint">New residents, born through the mind's own creation form.</p>
+          <div id="resident-cards" class="resident-cards"></div>
+        </div>
+
+        <footer class="wizard-foot">
+          <div id="wizard-error" class="error-text"></div>
+          <button class="ghost" id="wiz-back" type="button">Back</button>
+          <button class="primary" id="wiz-next" type="button">Next</button>
+        </footer>
+      </main>
+    </div>
+  </section>
+
+  <!-- ============ WORLD VIEW ============ -->
+  <section id="hud" class="screen hidden">
+    <header class="topbar ui">
+      <div class="brand small"><span class="brand-mark">✳</span><b>MIND<span>FORM</span></b> <em>WORLD</em></div>
+      <div class="clock">
+        <div id="clock-time">Day 1 · 07:00</div>
+        <div id="clock-sub">morning · clear skies</div>
+      </div>
+      <div class="badges">
+        <span class="pill" id="badge-mind">MindForm v0</span>
+        <span class="pill" id="badge-brain">world: rules</span>
+        <span class="pill phase" id="badge-phase">idle</span>
+      </div>
+    </header>
+
+    <aside class="panel left ui">
+      <div class="panel-title">RESIDENTS <span id="res-count"></span></div>
+      <div id="res-list" class="res-list"></div>
+      <div class="panel-title">ON THE ISLAND</div>
+      <div id="event-list" class="event-list"></div>
+    </aside>
+
+    <aside class="panel right ui">
+      <div class="tabs">
+        <button data-tab="story" class="active">Story</button>
+        <button data-tab="resident">Resident</button>
+      </div>
+      <div class="tab" data-tab="story">
+        <div class="chips" id="story-filter">
+          <button data-f="all" class="active">All</button><button data-f="speech">Speech</button>
+          <button data-f="inner">Inner voice</button><button data-f="formation">Formation</button>
+          <button data-f="events">Events</button>
+        </div>
+        <div id="story" class="story"></div>
+      </div>
+      <div class="tab hidden" data-tab="resident">
+        <div id="inspector" class="inspector"><p class="muted center">Click a resident on the island or in the list.</p></div>
+      </div>
+    </aside>
+
+    <footer class="controls ui">
+      <button id="c-lobby" class="ctl" title="Back to the lobby">⌂</button>
+      <button id="c-play" class="ctl primary">▶ Play</button>
+      <button id="c-step" class="ctl" title="One beat">+1 beat</button>
+      <div class="seg tiny" id="c-speed"><button data-v="0.5">½×</button><button data-v="1">1×</button><button data-v="2">2×</button><button data-v="4">4×</button><button data-v="0">max</button></div>
+      <div class="seg tiny" id="c-cam"><button data-v="orbit">Orbit</button><button data-v="follow">Follow</button><button data-v="cinema">Cinema</button></div>
+      <button id="c-god" class="ctl gold" title="Make something happen">⚡ God mode</button>
+      <button id="c-record" class="ctl" title="Hide the interface for recording (H)">◉ Record</button>
+      <button id="c-more" class="ctl" title="Export / clone">⋯</button>
+    </footer>
+
+    <div id="toasts" class="toasts"></div>
+    <div id="caption" class="caption hidden"></div>
+    <div id="record-badge" class="record-badge"></div>
+    <div id="creating" class="creating hidden">
+      <div class="spinner"></div><b>Birthing residents…</b><p id="creating-text"></p>
+    </div>
+    <div id="error-banner" class="error-banner hidden"></div>
+  </section>
+
+  <!-- God mode -->
+  <dialog id="god" class="modal">
+    <form method="dialog" id="god-form">
+      <h3>⚡ Make something happen</h3>
+      <p class="muted">Whispers go to one resident's mind verbatim (like typing into the MindForm console).
+        Events happen in the world: whoever is there perceives them.</p>
+      <div class="seg" id="god-kind"><button type="button" data-v="whisper">Whisper to a resident</button><button type="button" data-v="event">Event at a place</button><button type="button" data-v="island">Island-wide event</button></div>
+      <label id="god-target-wrap">Resident<select id="god-target"></select></label>
+      <label id="god-place-wrap" class="hidden">Place<select id="god-place"></select></label>
+      <label id="god-title-wrap" class="hidden">Title<input id="god-title" placeholder="A stranger arrives" maxlength="80" /></label>
+      <label>What happens <small id="god-text-hint">first person, as a fact: "I found a letter under my door…"</small>
+        <textarea id="god-text" rows="3" maxlength="600"></textarea></label>
+      <label id="god-min-wrap" class="hidden">Lasts (minutes)<input id="god-min" type="number" value="120" min="15" max="720" /></label>
+      <div class="error-text" id="god-error"></div>
+      <div class="modal-foot"><button value="cancel" class="ghost">Cancel</button><button id="god-send" value="default" class="primary">Send</button></div>
+    </form>
+  </dialog>
+
+  <!-- Export / clone -->
+  <dialog id="more" class="modal">
+    <form method="dialog" id="more-form">
+      <h3>Experiment</h3>
+      <p class="muted">Everything this world lived is on disk: setup, every experience, every reply, MindForm's appraisal and
+        formation per turn, and the mind's own files.</p>
+      <a id="more-export" class="primary button" href="#">⇩ Download world (.zip)</a>
+      <h4>Run it again with the same cast</h4>
+      <p class="muted">Re-births the same residents from the same specs into a fresh world. Change the seed or the modes to compare.</p>
+      <div class="form-grid compact">
+        <label>Seed<input id="clone-seed" type="number" /></label>
+        <label>World brain<select id="clone-brain"><option value="rules">Rules</option><option value="llm">LLM</option></select></label>
+        <label>MindForm<select id="clone-mind"><option value="false">Offline</option><option value="true">LLM</option></select></label>
+      </div>
+      <div class="error-text" id="clone-error"></div>
+      <div class="modal-foot"><button value="cancel" class="ghost">Close</button><button id="clone-go" value="default" class="primary">Clone world</button></div>
+    </form>
+  </dialog>
+
+  <script type="module" src="/static/js/main.js"></script>
 </body>
 </html>
