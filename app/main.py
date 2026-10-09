@@ -13,6 +13,10 @@
     POST /api/worlds/{id}/clone            same cast, new world: {"seed", "world_brain", "mind_llm", "name"}
     POST /api/worlds/{id}/close            stop its mind process and unload it
     GET  /api/worlds/{id}/export           the whole world folder as a zip
+
+Old cached pages: the pre-0.2 demo client polled /api/state and /api/step. A browser can keep that
+page cached and never ask for "/" again, so those two endpoints answer it in its own format with
+"reload this page", and tell the browser to drop its cached copy (Clear-Site-Data).
 """
 from __future__ import annotations
 
@@ -22,7 +26,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app import llm
@@ -31,7 +35,9 @@ from app.world.manager import SetupError, WorldManager
 from app.world.places import public_map
 
 ROOT = Path(__file__).resolve().parent.parent
+APP_VERSION = "0.3.0"        # bump when client + API change together: open pages reload themselves
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+log = logging.getLogger("mindform.world.app")
 
 manager = WorldManager()
 
@@ -42,7 +48,7 @@ async def lifespan(_app: FastAPI):
     manager.shutdown()
 
 
-app = FastAPI(title="MindForm World", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="MindForm World", version=APP_VERSION, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 @app.middleware("http")
@@ -67,15 +73,52 @@ def index():
     return FileResponse(ROOT / "static" / "index.html")
 
 
+@app.get("/favicon.ico")
+def favicon():
+    return FileResponse(ROOT / "static" / "favicon.svg", media_type="image/svg+xml")
+
+
+# --- old cached pages -------------------------------------------------------------------
+LEGACY_NOTICE = ("MindForm World was upgraded and this tab is an old cached copy. "
+                 "Reload the page (Cmd+Shift+R) to open the new version.")
+_legacy_warned = False
+
+
+def _legacy_page(clear_cache: bool) -> JSONResponse:
+    """Answer the pre-0.2 client in the shape it renders (its 'mode' badge + activity feed)."""
+    global _legacy_warned
+    if not _legacy_warned:
+        _legacy_warned = True
+        log.warning("A browser tab is running an old cached MindForm World page (it asked for /api/state). "
+                    "Reload that tab: Cmd+Shift+R.")
+    payload = {"tick": 0, "mode": "upgraded: reload this page", "agents": [],
+               "events": [{"tick": 0, "actor": "world", "message": LEGACY_NOTICE}]}
+    headers = {"Cache-Control": "no-store"}
+    if clear_cache:
+        headers["Clear-Site-Data"] = '"cache"'    # the next plain reload fetches the new files
+    return JSONResponse(payload, headers=headers)
+
+
+@app.get("/api/state")
+def legacy_state():
+    return _legacy_page(clear_cache=True)
+
+
+@app.post("/api/step")
+@app.post("/api/reset")
+def legacy_step():
+    return _legacy_page(clear_cache=False)
+
+
 @app.get("/api/health")
 def health():
-    return {"ok": True, "open_worlds": len(manager.worlds)}
+    return {"ok": True, "open_worlds": len(manager.worlds), "app_version": APP_VERSION}
 
 
 @app.get("/api/status")
 def status():
     return {"llm": {"available": llm.available(), "model": llm.model_label()},
-            "versions": versions(), "map": public_map()}
+            "versions": versions(), "map": public_map(), "app_version": APP_VERSION}
 
 
 @app.get("/api/worlds")
@@ -94,7 +137,7 @@ def create_world(setup: dict = Body(...)):
 
 @app.get("/api/worlds/{wid}/state")
 def world_state(wid: str, since: int = 0):
-    return _world(wid).public_state(since)
+    return {**_world(wid).public_state(since), "app_version": APP_VERSION}
 
 
 @app.post("/api/worlds/{wid}/run")

@@ -36,6 +36,7 @@ from pathlib import Path
 from app import llm
 from app.minds import Mind, describe_state, make_mind, version_name
 from app.world import director, narrator, planner
+from app.world.emotion import HEADLINE_THRESHOLD, SHOW_THRESHOLD, read_emotion
 from app.world.places import (ACTIVITIES, ISLAND_NAME, JOBS, LOCATIONS, activity_place,
                               available_activities, doing_text, home_id, home_slot, path_between)
 
@@ -45,7 +46,11 @@ WAKE_HOUR = 7
 BED_HOUR = 23
 MAX_RESIDENTS = 10
 FEED_KEEP = 800
-BASE_BEAT_SECONDS = 6.0          # real seconds per beat at 1x (time to watch them walk)
+BASE_BEAT_SECONDS = 7.0          # shortest beat at 1x (real seconds)
+WALK_SECONDS = 6.0               # at 1x, each beat opens with ~6 s of walking before anyone speaks
+# Watchable pacing: every "headline" (a line said, an event, a strong emotion, a bond) gets this
+# many seconds on screen at 1x; the beat waits for its headlines before the next one runs.
+DWELL = {"event": 2.6, "letter": 2.6, "weather": 2.0, "inject": 1.8, "bond": 1.8, "emotion": 1.5}
 AFFINITY_RATE = 0.2              # how far one encounter's valence (MindForm's reading) moves a relationship
 PALETTE = ["#f4a6c8", "#ffb565", "#84cffa", "#acf2a9", "#d7b4ff", "#ffe08a",
            "#7fe0d4", "#ff9b8a", "#b9c7ff", "#f6c6a0"]
@@ -75,6 +80,9 @@ def daypart(hour: int) -> str:
 
 def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-") or "resident"
+
+
+_FEELING_ORDER = ["hostile", "cool", "neutral", "warm", "close"]
 
 
 def _feeling(affinity: float, talks: int) -> str:
@@ -108,6 +116,7 @@ class Resident:
     x: float = 0.0
     z: float = 0.0
     path: list = field(default_factory=list)
+    path_t: int = 0                              # the island time of the beat that set this path
     doing: str = "waking up"
     activity_id: str | None = None
     intent: str = ""
@@ -126,6 +135,7 @@ class Resident:
     pending: list = field(default_factory=list)  # letters / whispers waiting for the next beat
     turns: int = 0
     last_appraisal: dict | None = None
+    mood: dict | None = None                     # MindForm's last reading, named (see emotion.py)
     mind_error: str | None = None
 
     def public(self, world: "World") -> dict:
@@ -181,6 +191,7 @@ class World:
         self.stats = llm.Stats()
         self.mind: Mind | None = None
         self.last_beat_seconds = 0.0
+        self.beat_dwell = 0.0                     # sum of this beat's headline dwell (pacing)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._io_lock = threading.Lock()
@@ -212,11 +223,22 @@ class World:
         radius = 2.4 + 0.35 * (index % 3)
         return round(loc["x"] + radius * math.cos(angle), 2), round(loc["z"] + radius * math.sin(angle), 2)
 
-    def emit(self, kind: str, text: str = "", **extra) -> dict:
+    @staticmethod
+    def dwell_for(kind: str, text: str) -> float:
+        """Seconds at 1x a headline stays the focus (long lines take longer to read)."""
+        if kind == "say":
+            return round(min(3.2, max(1.8, 1.3 + 0.014 * len(text))), 2)
+        return DWELL.get(kind, 0.0)
+
+    def emit(self, kind: str, text: str = "", dwell: float | None = None, **extra) -> dict:
         with self.lock:
             self.feed_seq += 1
+            dwell = self.dwell_for(kind, text) if dwell is None else dwell
             item = {"seq": self.feed_seq, "kind": kind, "t": self.clock, "time": time_text(self.clock),
                     "text": text, **extra}
+            if dwell:
+                item["dwell"] = dwell
+                self.beat_dwell += dwell
             self.feed.append(item)
         self._append_jsonl("feed.jsonl", item)
         return item
@@ -434,6 +456,8 @@ class World:
                 return False
             self.busy = True
         started = time.monotonic()
+        with self.lock:
+            self.beat_dwell = 0.0
         try:
             if hour_of(self.clock) >= BED_HOUR or hour_of(self.clock) < WAKE_HOUR:
                 self._night()
@@ -640,8 +664,8 @@ class World:
                 items[r.id].append({"k": "move", "from": self._my_place_name(r, r.place),
                                     "to": self._my_place_name(r, dest[r.id])})
             if a["type"] == "do":
-                text = self._outcome(r, a["activity"])
-                outcomes[r.id] = text
+                text, quality = self._outcome_q(r, a["activity"])
+                outcomes[r.id] = (text, quality)
                 items[r.id].append({"k": "outcome", "text": text})
                 doing[r.id] = doing_text(a["activity"])
             elif a["type"] == "go":
@@ -720,6 +744,7 @@ class World:
             else:
                 r.path = [[r.x, r.z]]
             r.place = new_place
+            r.path_t = self.clock
             key = "home" if new_place.startswith("home:") else new_place
             if key not in r.visited_today:
                 r.visited_today.append(key)
@@ -734,7 +759,12 @@ class World:
             self.emit("plan", r.intent, actor=r.id, action=a["type"], doing=r.doing,
                       place=new_place, place_name=self.place_name(new_place), source=r.plan_source)
             if r.id in outcomes:
-                self.emit("outcome", outcomes[r.id], actor=r.id, place=new_place)
+                text, quality = outcomes[r.id]
+                # A notable result (went well / went wrong) is a small moment on screen; routine ones
+                # only go to the story -- unless they are about to talk, which says more.
+                notable = quality != "0" and r.id not in talk and not addressed_by[r.id]
+                self.emit("outcome", text, actor=r.id, place=new_place, quality=quality, notable=notable,
+                          dwell=1.4 if notable else 0.0)
         for rid, target in talk.items():
             self.emit("say", lines[rid][0], actor=rid, to=target, to_name=R[target].name,
                       source=lines[rid][1], brushoff=rid in brushoff)
@@ -757,6 +787,10 @@ class World:
                 "levels": level, "dest": dest, "actions": actions}
 
     def _outcome(self, r: Resident, activity_id: str) -> str:
+        return self._outcome_q(r, activity_id)[0]
+
+    def _outcome_q(self, r: Resident, activity_id: str) -> tuple[str, str]:
+        """(fact, quality) -- quality "+"/"-"/"0" is world odds, shown on screen, never to the mind."""
         act = ACTIVITIES[activity_id]
         bad = self.weather in director.BAD_WEATHER
         rng = random.Random(f"{self.seed}:{self.beat}:{r.id}:{activity_id}:outcome")
@@ -770,10 +804,11 @@ class World:
                 w *= 1.6
             elif skilled and quality == "-":
                 w *= 0.7
-            pool.append((w, text))
+            pool.append((w, text, quality))
         if not pool:
-            return f"I spent the time trying to {act['label']}."
-        return rng.choices([t for _, t in pool], weights=[w for w, _ in pool])[0]
+            return f"I spent the time trying to {act['label']}.", "0"
+        _, text, quality = rng.choices(pool, weights=[w for w, _, _ in pool])[0]
+        return text, quality
 
     def _live(self, plan: dict) -> None:
         """Narrate + form, level by level (listeners before the speakers who need their answers)."""
@@ -837,12 +872,24 @@ class World:
             leaving_from = [s for s in addressed_by.get(rid, []) if s in brushoff]
             self.emit("experience", text, actor=rid, source=narr_source,
                       appraisal=appraisal, mind_source=(turn.state.get("sources") if turn else None))
+            emotion = read_emotion(appraisal)
+            if emotion:
+                r.mood = {**emotion, "t": self.clock}
+            spoke = False
             if turn and turn.reply:
                 if heard_from:
                     self.emit("say", turn.reply, actor=rid, to=heard_from[0], to_name=R[heard_from[0]].name,
-                              source="mind", answer=True)
+                              source="mind", answer=True, emotion=emotion)
+                    spoke = True
                 else:
-                    self.emit("reaction", turn.reply, actor=rid, source="mind")
+                    self.emit("reaction", turn.reply, actor=rid, source="mind", emotion=emotion)
+            if emotion:
+                headline = emotion["strength"] >= HEADLINE_THRESHOLD
+                # Every reading updates their face; strong ones get a moment of their own on screen
+                # (none when it plays alongside their spoken line).
+                self.emit("emotion", f"{r.name} felt {emotion['label']}", actor=rid, headline=headline,
+                          shown=emotion["strength"] >= SHOW_THRESHOLD,
+                          dwell=0.0 if (spoke or not headline) else None, **emotion)
             if rid in talk and turn and turn.reply and rid not in brushoff:
                 r.inclination = {"to": talk[rid], "text": turn.reply, "beat": self.beat}
             elif heard_from and turn and turn.reply:
@@ -867,14 +914,22 @@ class World:
                 involved[s] = f"you walked off while {R[s].name} was talking"
             for oid, what in involved.items():
                 rel = r.relationships.setdefault(oid, {"affinity": 0.0, "talks": 0, "last": ""})
+                before = _feeling(rel["affinity"], rel["talks"]) if rel["talks"] else None
                 rel["affinity"] = max(-1.0, min(1.0, rel["affinity"] + AFFINITY_RATE * valence * (1 - abs(rel["affinity"]))))
                 rel["talks"] += 1
                 rel["last"] = f"{what} ({time_text(self.clock)})"
+                after = _feeling(rel["affinity"], rel["talks"])
+                if before is not None and after != before:          # a relationship turned a corner
+                    warmer = _FEELING_ORDER.index(after) > _FEELING_ORDER.index(before)
+                    self.emit("bond", f"{r.name} now feels {after} toward {R[oid].name}", actor=rid,
+                              other=oid, other_name=R[oid].name, feeling=after, warmer=warmer,
+                              affinity=round(rel["affinity"], 3))
             record = {"world": self.id, "beat": self.beat, "t": self.clock, "time": time_text(self.clock),
                       "resident": rid, "name": r.name, "place": r.place, "action": plan["actions"][rid],
                       "experience": text, "narration": narr_source, "facts": items,
                       "reply": turn.reply if turn else None, "appraisal": appraisal,
-                      "formation": turn.formation if turn else None, "state": r.state, "error": error}
+                      "formation": turn.formation if turn else None, "emotion": emotion,
+                      "state": r.state, "error": error}
         self._append_jsonl("experiences.jsonl", record)
 
     def _night(self) -> None:
@@ -895,6 +950,7 @@ class World:
                     r.place = r.home
                 else:
                     r.path = [[r.x, r.z]]
+                r.path_t = self.clock
                 its.append({"k": "bed"})
                 its.extend(r.pending)
                 r.pending = []
@@ -942,7 +998,7 @@ class World:
                 self.running = False
                 self.error = str(exc)
                 self.emit("system", f"The simulation paused after an error: {exc}")
-            pace = 0.0 if self.speed <= 0 else BASE_BEAT_SECONDS / self.speed
+            pace = 0.0 if self.speed <= 0 else max(BASE_BEAT_SECONDS, WALK_SECONDS + self.beat_dwell) / self.speed
             remaining = pace - (time.monotonic() - t0)
             if remaining > 0:
                 self._stop.wait(remaining)
@@ -998,7 +1054,7 @@ class World:
                            if e["end"] > self.clock and e["start"] - self.clock <= 180 and not e.get("target")],
                 "residents": [r.public(self) for r in self.residents.values()],
                 "feed": feed, "feed_seq": self.feed_seq, "last_beat_seconds": self.last_beat_seconds,
-                "base_beat_seconds": BASE_BEAT_SECONDS,
+                "base_beat_seconds": BASE_BEAT_SECONDS, "walk_seconds": WALK_SECONDS,
             }
 
     def summary(self) -> dict:

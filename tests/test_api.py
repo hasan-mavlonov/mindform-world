@@ -97,3 +97,24 @@ def test_unknown_world(client):
     assert client.get("/api/worlds/nope/state").status_code == 404
     assert client.get("/api/worlds/..%2F..%2Fetc/state").status_code == 404
     assert client.post("/api/worlds/nope/clone", json={}).status_code == 404
+
+
+def test_old_cached_page_is_told_to_reload(client):
+    """A browser can keep the pre-0.2 page cached and only ever call /api/state + /api/step."""
+    r = client.get("/api/state")
+    assert r.status_code == 200 and r.headers["clear-site-data"] == '"cache"'
+    data = r.json()
+    assert data["agents"] == [] and "reload" in data["events"][0]["message"].lower()
+    assert "reload" in data["mode"]                      # the old page shows this in its top bar
+    step = client.post("/api/step?n=1")
+    assert step.status_code == 200 and "clear-site-data" not in step.headers
+    assert client.post("/api/reset").status_code == 200
+
+
+def test_frontend_is_never_cached_and_versioned(client):
+    for path in ("/", "/static/js/main.js", "/static/js/scene.js"):
+        assert "no-store" in client.get(path).headers["cache-control"]
+    assert client.get("/favicon.ico").status_code == 200
+    version = client.get("/api/status").json()["app_version"]
+    wid = client.post("/api/worlds", json=control_setup()).json()["id"]
+    assert wait_ready(client, wid)["app_version"] == version   # open pages reload when this changes
