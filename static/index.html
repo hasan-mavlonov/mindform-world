@@ -15,6 +15,11 @@
   <div id="stage">
     <canvas id="world"></canvas>
     <div id="overlay"></div>
+    <div id="frame-ui">
+      <div id="cards" class="cards"></div>
+      <div id="caption" class="caption hidden"></div>
+      <div id="record-badge" class="record-badge"></div>
+    </div>
   </div>
 
   <!-- ============ LOBBY: pick a mind, set the world up, birth the residents ============ -->
@@ -66,6 +71,11 @@
               <small class="hint">Each one is a stretch of <b id="w-pace-min">15</b> island minutes, fed to the mind as one experience.</small>
             </div>
             <div class="field">
+              <span>How residents talk</span>
+              <div class="seg" id="w-voices"><button data-v="styled">Their own voices</button><button data-v="mind">MindForm's words</button></div>
+              <small class="hint" id="w-voices-hint"></small>
+            </div>
+            <div class="field">
               <span>Drama</span>
               <div class="seg" id="w-drama"><button data-v="1">Calm</button><button data-v="2">Lively</button><button data-v="3">Dramatic</button></div>
               <small class="hint">How often incidents strike, and how hard (letters, storms, crises).</small>
@@ -77,6 +87,7 @@
           <div class="residents-head">
             <h2>Who lives here?</h2>
             <div class="row">
+              <button class="ghost" id="r-drama" type="button" title="Aya, Rex, Ines, Leo and Mira — each with a secret">🎬 Drama cast</button>
               <button class="ghost" id="r-surprise" type="button">✦ Surprise me</button>
               <button class="ghost" id="r-add" type="button">+ Add resident</button>
             </div>
@@ -123,8 +134,9 @@
       </div>
       <div class="tab" data-tab="story">
         <div class="chips" id="story-filter">
-          <button data-f="all" class="active">All</button><button data-f="speech">Speech</button>
-          <button data-f="inner">Inner voice</button><button data-f="feelings">Feelings</button>
+          <button data-f="all" class="active">All</button><button data-f="highlights">★ Highlights</button>
+          <button data-f="speech">Speech</button><button data-f="inner">Inner voice</button>
+          <button data-f="secrets">Secrets</button><button data-f="feelings">Feelings</button>
           <button data-f="events">Events</button>
         </div>
         <div id="story" class="story"></div>
@@ -140,14 +152,16 @@
       <button id="c-step" class="ctl" title="One beat">+1 beat</button>
       <div class="seg tiny" id="c-speed"><button data-v="0.5">½×</button><button data-v="1">1×</button><button data-v="2">2×</button><button data-v="4">4×</button><button data-v="0">max</button></div>
       <div class="seg tiny" id="c-cam"><button data-v="orbit">Orbit</button><button data-v="follow">Follow</button><button data-v="cinema">Cinema</button></div>
-      <button id="c-god" class="ctl gold" title="Make something happen">⚡ God mode</button>
+      <button id="c-god" class="ctl gold" title="Make something happen (G)">⚡ God mode</button>
+      <span class="ctl-sep"></span>
+      <button id="c-creator" class="ctl" title="Creator mode: big bubbles, no debug chips, trait cards (C)">🎬 Creator</button>
+      <button id="c-vertical" class="ctl" title="9:16 frame for Reels / Shorts (V)">▯ 9:16</button>
+      <button id="c-sound" class="ctl" title="Ambient sound and speech blips (M)">🔇</button>
       <button id="c-record" class="ctl" title="Hide the interface for recording (H)">◉ Record</button>
       <button id="c-more" class="ctl" title="Export / clone">⋯</button>
     </footer>
 
     <div id="toasts" class="toasts"></div>
-    <div id="caption" class="caption hidden"></div>
-    <div id="record-badge" class="record-badge"></div>
     <div id="creating" class="creating hidden">
       <div class="spinner"></div><b>Birthing residents…</b><p id="creating-text"></p>
     </div>
@@ -155,15 +169,20 @@
   </section>
 
   <!-- God mode -->
-  <dialog id="god" class="modal">
+  <dialog id="god" class="modal wide">
     <form method="dialog" id="god-form">
       <h3>⚡ Make something happen</h3>
-      <p class="muted">Whispers go to one resident's mind verbatim (like typing into the MindForm console).
-        Events happen in the world: whoever is there perceives them.</p>
-      <div class="seg" id="god-kind"><button type="button" data-v="whisper">Whisper to a resident</button><button type="button" data-v="event">Event at a place</button><button type="button" data-v="island">Island-wide event</button></div>
-      <label id="god-target-wrap">Resident<select id="god-target"></select></label>
+      <p class="muted">One click: it hits every resident next beat, and everyone reacts out loud.</p>
+      <div id="god-presets" class="presets"></div>
+      <div class="preset-opts">
+        <label id="god-ptarget-wrap">Who<select id="god-ptarget"></select></label>
+        <label id="god-pplace-wrap" class="hidden">Where<select id="god-pplace"></select></label>
+      </div>
+      <div class="god-or"><span>or write it yourself</span></div>
+      <div class="seg" id="god-kind"><button type="button" data-v="island">Everyone (forced reactions)</button><button type="button" data-v="event">At a place</button><button type="button" data-v="whisper">Whisper to one resident</button></div>
+      <label id="god-target-wrap" class="hidden">Resident<select id="god-target"></select></label>
       <label id="god-place-wrap" class="hidden">Place<select id="god-place"></select></label>
-      <label id="god-title-wrap" class="hidden">Title<input id="god-title" placeholder="A stranger arrives" maxlength="80" /></label>
+      <label id="god-title-wrap">Title<input id="god-title" placeholder="A whale in the harbor" maxlength="80" /></label>
       <label>What happens <small id="god-text-hint">first person, as a fact: "I found a letter under my door…"</small>
         <textarea id="god-text" rows="3" maxlength="600"></textarea></label>
       <label id="god-min-wrap" class="hidden">Lasts (minutes)<input id="god-min" type="number" value="120" min="15" max="720" /></label>

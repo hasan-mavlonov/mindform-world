@@ -25,6 +25,25 @@ function mat(color, opts = {}) {
   return mats.get(key);
 }
 
+// Looks: everyone keeps their own color (shirt or scarf) and gets hair, skin, trousers and a hat
+// or prop from their id (stable) and their trade (the baker's toque, the keeper's sou'wester...).
+const SKIN = ['#f6d7c3', '#eac2a2', '#d9a47f', '#c68f66', '#a86d48', '#7d4e33', '#5e3a26'];
+const HAIR = ['#2b1d16', '#4a2f1d', '#7a4b2a', '#c79a5b', '#151515', '#9a9a9a', '#b5523b', '#e3c27a', '#5c3a5e'];
+const TROUSERS = ['#243a3a', '#3b3f58', '#5b4636', '#2f4f4f', '#4a4a4a', '#55456e', '#3c5a46'];
+const TRADE = {
+  baker: { hat: 'chef', apron: '#fbfbf5' },
+  nurse: { coat: '#f2f7fa', cross: true },
+  boatbuilder: { hat: 'cap', capColor: '#3d5a80', overalls: '#3d5a80' },
+  keeper: { hat: 'sou', coat: '#f2c94c', capColor: '#f2c94c' },
+  fisher: { hat: 'beanie', capColor: '#b83a2e', boots: '#e0a800' },
+  librarian: { glasses: true, cardigan: '#8a6f5a' },
+  clerk: { tie: '#24364b', glasses: true },
+  coach: { headband: '#e74c3c', whistle: true },
+  gardener: { hat: 'straw', apron: '#6a8f4e' },
+  vendor: { hat: 'cap', capColor: '#d35400', apron: '#d35400' },
+  none: { backpack: '#c0703f' },
+};
+
 const FOOT = { plaza: 4.6, cafe: 3.4, market: 3.2, library: 3.8, town_hall: 3.6, clinic: 3.0, lighthouse: 3.6,
   workshop: 4.2, dock: 3.0, rowing_club: 4.0, beach: 4.5, cliffs: 5.5, greenhouse: 5.2 };
 
@@ -80,6 +99,8 @@ export class IslandScene {
     this.cinema = { next: 0, focus: null };
     this.pickHandlers = [];
     this.windowMats = [];
+    this.eventFx = new Map();      // fires, the stranger, festival lanterns
+    this.creator = false;
 
     this._lights();
     this._water();
@@ -96,7 +117,13 @@ export class IslandScene {
     const w = this.canvas.clientWidth || window.innerWidth, h = this.canvas.clientHeight || window.innerHeight;
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
+    this.camera.fov = w / h < 0.8 ? 58 : 40;           // a 9:16 frame needs a taller lens to keep people in shot
     this.camera.updateProjectionMatrix();
+  }
+
+  setCreator(on) {
+    this.creator = on;
+    this.maxBubbles = on ? 3 : 4;
   }
 
   // ------------------------------------------------------------------ build
@@ -565,9 +592,15 @@ export class IslandScene {
 
   _figure(r) {
     const g = new THREE.Group();
-    const suit = mat(r.color), dark = mat('#243a3a'), ink = mat('#1d2b2b');
+    let h = 0;
+    for (const ch of r.id) h = (h * 31 + ch.charCodeAt(0)) % 99991;
+    const pick = (list, salt) => list[(h * (salt * 7 + 3) + salt * 13) % list.length];
+    const trade = TRADE[r.job] || TRADE.none;
+    const shirt = trade.coat || trade.cardigan || r.color;
+    const suit = mat(shirt), dark = mat(trade.overalls ? '#2b2b2b' : pick(TROUSERS, 2)), ink = mat('#1d2b2b');
+    const skinTone = pick(SKIN, 1), hairColor = pick(HAIR, 3), hairStyle = h % 5;
     // Each resident gets their own skin material: it flushes red with anger, pink with embarrassment.
-    const skin = new THREE.MeshStandardMaterial({ color: '#f1d3bd', roughness: 0.85 });
+    const skin = new THREE.MeshStandardMaterial({ color: skinTone, roughness: 0.85 });
     const body = new THREE.Group();                       // bounces, slumps, shakes
     g.add(body);
     const torso = this.mesh(new THREE.CapsuleGeometry(0.3, 0.45, 5, 10), suit, 0, 0.92, 0, body);
@@ -586,7 +619,7 @@ export class IslandScene {
     head.position.set(0, 1.42, 0);
     body.add(head);
     this.mesh(new THREE.SphereGeometry(0.28, 18, 12), skin, 0, 0.23, 0, head);
-    this.mesh(new THREE.SphereGeometry(0.295, 16, 8, 0, TAU, 0, Math.PI * 0.45), dark, 0, 0.27, 0, head);
+    this._outfit(r, trade, { body, torso, head, legL, legR, hairColor, hairStyle });
     for (const ex of [-0.1, 0.1]) this._part(new THREE.SphereGeometry(0.028, 8, 6), ink, ex, 0.25, 0.262, head);
     const browL = this._part(new THREE.BoxGeometry(0.1, 0.022, 0.02), ink, -0.1, 0.33, 0.252, head);
     const browR = this._part(new THREE.BoxGeometry(0.1, 0.022, 0.02), ink, 0.1, 0.33, 0.252, head);
@@ -622,12 +655,141 @@ export class IslandScene {
     const tagMood = document.createElement('i');
     tag.append(tagName, tagMood);
     this.overlay.append(tag);
-    let h = 0;
-    for (const ch of r.id) h = (h * 31 + ch.charCodeAt(0)) % 997;
+    h = h % 997;
     return { id: r.id, group: g, body, torso, legL, legR, armL, armR, head, browL, browR, cheeks, skin, cloud, drops,
              mouths: { smile, frown, open, flat }, ring, tag, tagMood, path: null, walkStart: 0, walkDur: 0,
              lastPathKey: '', asleep: false, talking: false, color: r.color, name: r.name, phase: h / 97,
              mood: r.mood || null, anim: null, talkUntil: 0 };
+  }
+
+  _outfit(r, trade, { body, torso, head, legL, legR, hairColor, hairStyle }) {
+    const hair = mat(hairColor), add = (geo, m, x, y, z, parent = body) => this._part(geo, m, x, y, z, parent);
+    const hat = trade.hat;
+    // Hair (under any hat): short crop, bun, long, curls, or close-cropped.
+    if (hairStyle !== 4 || !hat) this.mesh(new THREE.SphereGeometry(0.295, 16, 8, 0, TAU, 0, Math.PI * (hairStyle === 4 ? 0.3 : 0.45)), hair, 0, 0.27, 0, head);
+    if (hairStyle === 1 && !hat) add(new THREE.SphereGeometry(0.12, 10, 8), hair, 0, 0.5, -0.17, head);
+    if (hairStyle === 2) { const long = add(new THREE.BoxGeometry(0.5, 0.42, 0.14), hair, 0, 0.14, -0.2, head); long.castShadow = true; }
+    if (hairStyle === 3 && !hat) for (const [x, z] of [[-0.18, 0.05], [0.18, 0.05], [0, -0.18], [-0.12, -0.14], [0.12, -0.14]])
+      add(new THREE.SphereGeometry(0.1, 8, 6), hair, x, 0.43, z, head);
+    const cap = mat(trade.capColor || r.color);
+    if (hat === 'chef') {
+      add(new THREE.CylinderGeometry(0.2, 0.22, 0.24, 14), mat('#fbfbf5'), 0, 0.6, 0, head);
+      add(new THREE.SphereGeometry(0.24, 12, 8), mat('#fbfbf5'), 0, 0.76, 0, head);
+    } else if (hat === 'cap') {
+      add(new THREE.SphereGeometry(0.3, 14, 8, 0, TAU, 0, Math.PI * 0.42), cap, 0, 0.3, 0, head);
+      add(new THREE.BoxGeometry(0.34, 0.03, 0.2), cap, 0, 0.36, 0.26, head);
+    } else if (hat === 'sou') {
+      add(new THREE.SphereGeometry(0.31, 14, 8, 0, TAU, 0, Math.PI * 0.45), cap, 0, 0.3, 0, head);
+      add(new THREE.CylinderGeometry(0.46, 0.46, 0.03, 18), cap, 0, 0.33, -0.04, head);
+    } else if (hat === 'beanie') {
+      add(new THREE.SphereGeometry(0.31, 14, 8, 0, TAU, 0, Math.PI * 0.48), cap, 0, 0.29, 0, head);
+      add(new THREE.SphereGeometry(0.07, 8, 6), mat('#f6f1e4'), 0, 0.6, 0, head);
+    } else if (hat === 'straw') {
+      add(new THREE.CylinderGeometry(0.5, 0.5, 0.025, 20), mat('#e6c77a'), 0, 0.38, 0, head);
+      add(new THREE.CylinderGeometry(0.2, 0.24, 0.16, 14), mat('#e6c77a'), 0, 0.46, 0, head);
+      add(new THREE.TorusGeometry(0.21, 0.025, 6, 18), mat(r.color), 0, 0.42, 0, head).rotation.x = Math.PI / 2;
+    }
+    if (trade.headband) add(new THREE.TorusGeometry(0.285, 0.035, 6, 20), mat(trade.headband), 0, 0.33, 0, head).rotation.x = Math.PI / 2 - 0.15;
+    if (trade.glasses) for (const x of [-0.1, 0.1]) add(new THREE.TorusGeometry(0.05, 0.012, 5, 12), mat('#2d2d2d'), x, 0.25, 0.27, head);
+    // Body: their color as a scarf whenever a coat or uniform covers the shirt.
+    if (trade.coat || trade.cardigan || trade.overalls) add(new THREE.TorusGeometry(0.2, 0.06, 6, 16), mat(r.color), 0, 1.3, 0).rotation.x = Math.PI / 2;
+    if (trade.apron) add(new THREE.BoxGeometry(0.44, 0.48, 0.03), mat(trade.apron), 0, 0.8, 0.29);
+    if (trade.overalls) {
+      add(new THREE.BoxGeometry(0.5, 0.36, 0.5), mat(trade.overalls), 0, 0.72, 0);
+      for (const x of [-0.13, 0.13]) add(new THREE.BoxGeometry(0.06, 0.4, 0.04), mat(trade.overalls), x, 1.02, 0.27);
+    }
+    if (trade.cross) { add(new THREE.BoxGeometry(0.16, 0.05, 0.02), mat('#e74c3c'), -0.13, 1.06, 0.3); add(new THREE.BoxGeometry(0.05, 0.16, 0.02), mat('#e74c3c'), -0.13, 1.06, 0.3); }
+    if (trade.tie) add(new THREE.BoxGeometry(0.07, 0.38, 0.02), mat(trade.tie), 0, 1.0, 0.3);
+    if (trade.whistle) add(new THREE.SphereGeometry(0.05, 8, 6), mat('#c9c9c9'), 0.06, 1.0, 0.31);
+    if (trade.backpack) add(new THREE.BoxGeometry(0.42, 0.46, 0.2), mat(trade.backpack), 0, 0.95, -0.36);
+    if (trade.boots) for (const leg of [legL, legR]) add(new THREE.BoxGeometry(0.18, 0.16, 0.24), mat(trade.boots), leg.position.x, 0.1, 0.03);
+  }
+
+  // ------------------------------------------------------------- event visuals
+  _eventVisuals(events) {
+    const want = new Map();
+    for (const e of events) {
+      if (!e.active) continue;
+      if (e.kind === 'fire' && e.place) want.set(`fire:${e.place}`, e);
+      if (e.kind === 'stranger') want.set(`stranger:${e.place || 'dock'}`, e);
+      if (e.kind === 'festival') want.set(`festival:${e.place || 'plaza'}`, e);
+    }
+    for (const [key, fx] of this.eventFx) if (!want.has(key)) { this.root.remove(fx.group); fx.light && this.root.remove(fx.light); fx.tag?.remove(); this.eventFx.delete(key); }
+    for (const [key, e] of want) if (!this.eventFx.has(key)) this.eventFx.set(key, this._makeEventFx(key.split(':')[0], e));
+  }
+
+  _makeEventFx(kind, e) {
+    const loc = this.places.get(e.place || (kind === 'stranger' ? 'dock' : 'plaza')) || { x: 0, z: 0 };
+    const g = new THREE.Group();
+    g.position.set(loc.x, 0, loc.z);
+    this.root.add(g);
+    const fx = { kind, group: g, parts: [] };
+    if (kind === 'fire') {
+      // Flames out of the roof and the windows, smoke above, an orange glow on everything near.
+      for (let i = 0; i < 9; i++) {
+        const a = i / 9 * TAU, r = i < 5 ? 0.9 + (i % 2) * 0.9 : 2.6;
+        const y = i < 5 ? 4.6 : 1.8;
+        const flame = this._part(new THREE.ConeGeometry(i < 5 ? 0.7 + (i % 2) * 0.3 : 0.45, i < 5 ? 2.6 + (i % 3) * 0.8 : 1.4, 7),
+          new THREE.MeshStandardMaterial({ color: i % 2 ? '#ff9a1a' : '#ff5a12', emissive: i % 2 ? '#ff8a00' : '#ff3a00', emissiveIntensity: 1.25, transparent: true, opacity: 0.9 }),
+          Math.cos(a) * r, y, Math.sin(a) * r, g);
+        flame.renderOrder = 2;
+        fx.parts.push({ m: flame, phase: i * 1.7, kind: 'flame' });
+      }
+      for (let i = 0; i < 10; i++) {
+        const puff = this._part(new THREE.SphereGeometry(0.6, 8, 6), new THREE.MeshStandardMaterial({ color: '#3a3a3a', transparent: true, opacity: 0.5 }), 0, 4, 0, g);
+        fx.parts.push({ m: puff, phase: i / 10, kind: 'smoke' });
+      }
+      fx.light = new THREE.PointLight('#ff7a2a', 30, 22, 2);
+      fx.light.position.set(loc.x, 4, loc.z);
+      this.root.add(fx.light);
+    } else if (kind === 'stranger') {
+      const coat = mat('#3b3f45'), skin = mat('#d9b49a');
+      const body = new THREE.Group();
+      body.position.set(-3.6, 0, 1.2);
+      g.add(body);
+      this._part(new THREE.CapsuleGeometry(0.32, 0.75, 5, 10), coat, 0, 0.95, 0, body);
+      this._part(new THREE.SphereGeometry(0.27, 14, 10), skin, 0, 1.75, 0, body);
+      this._part(new THREE.CylinderGeometry(0.42, 0.42, 0.03, 16), mat('#202326'), 0, 1.95, 0, body);
+      this._part(new THREE.CylinderGeometry(0.22, 0.26, 0.24, 14), mat('#202326'), 0, 2.08, 0, body);
+      this._part(new THREE.BoxGeometry(0.3, 0.32, 0.12), mat('#6b4f39'), 0.38, 0.75, 0.05, body);      // a suitcase
+      body.rotation.y = Math.atan2(-loc.x, -loc.z);
+      fx.parts.push({ m: body, kind: 'idle' });
+      const tag = document.createElement('div');
+      tag.className = 'tag3d stranger';
+      tag.textContent = 'Stranger';
+      this.overlay.append(tag);
+      fx.tag = tag;
+      fx.anchor = new THREE.Vector3(loc.x - 3.6, 2.6, loc.z + 1.2);
+    } else if (kind === 'festival') {
+      const colors = ['#ff6b6b', '#ffd93d', '#6bcB77', '#4d96ff', '#c77dff', '#ff9f45'];
+      for (let i = 0; i < 18; i++) {
+        const a = i / 18 * TAU;
+        const lantern = this._part(new THREE.SphereGeometry(0.2, 10, 8),
+          new THREE.MeshStandardMaterial({ color: colors[i % 6], emissive: colors[i % 6], emissiveIntensity: 1.2 }),
+          Math.cos(a) * 4.8, 3.0, Math.sin(a) * 4.8, g);
+        fx.parts.push({ m: lantern, phase: i, kind: 'lantern', y: 3.0 });
+      }
+      for (let i = 0; i < 4; i++) {
+        const a = i / 4 * TAU + 0.4;
+        this._part(new THREE.CylinderGeometry(0.05, 0.05, 3.2, 6), mat('#7b5640'), Math.cos(a) * 5, 1.6, Math.sin(a) * 5, g);
+      }
+      fx.light = new THREE.PointLight('#ffcf7a', 14, 16, 2);
+      fx.light.position.set(loc.x, 3.4, loc.z);
+      this.root.add(fx.light);
+    }
+    return fx;
+  }
+
+  _animateEventFx(t) {
+    for (const fx of this.eventFx.values()) {
+      for (const p of fx.parts) {
+        if (p.kind === 'flame') { p.m.scale.set(1, 0.75 + Math.abs(Math.sin(t * 9 + p.phase)) * 0.6, 1); p.m.rotation.y = t * 2 + p.phase; }
+        else if (p.kind === 'smoke') { const k = (t * 0.25 + p.phase) % 1; p.m.position.set(Math.sin(p.phase * 9) * 1.2 + k * 2, 6 + k * 10, Math.cos(p.phase * 7) * 1.2); p.m.scale.setScalar(0.8 + k * 2.6); p.m.material.opacity = 0.6 * (1 - k); }
+        else if (p.kind === 'lantern') p.m.position.y = p.y + Math.sin(t * 2 + p.phase) * 0.12;
+        else if (p.kind === 'idle') p.m.rotation.z = Math.sin(t * 1.3) * 0.03;
+      }
+      if (fx.kind === 'fire' && fx.light) fx.light.intensity = 26 + Math.sin(t * 23) * 8;
+    }
   }
 
   syncResidents(residents, { walkSeconds = 6, hold = new Set() } = {}) {
@@ -658,6 +820,14 @@ export class IslandScene {
       const cottage = this.cottages.get(r.id);
       if (cottage) cottage.home = r.place === r.home;
     }
+  }
+
+  walkElapsed(id) {             // seconds into their current walk; -1 before they set off; Infinity when not walking
+    const f = this.figures.get(id);
+    if (!f) return Infinity;
+    if (f.pendingPath) return -1;
+    const e = performance.now() - f.walkStart;
+    return f.walkDur > 0 && e < f.walkDur ? e / 1000 : Infinity;
   }
 
   isWalking(id, t = Infinity) {  // on their way (or about to set off for a moment at island time t)
@@ -802,6 +972,7 @@ export class IslandScene {
       this.windowMats = this.windowMats.filter(m => !c.windows.includes(m));
     }
     for (const b of [...this.bubbles, ...this.pops, ...this.fx]) b.el.remove();
+    this._eventVisuals([]);
     this.figures.clear();
     this.cottages.clear();
     this.bubbles = [];
@@ -824,18 +995,19 @@ export class IslandScene {
     const live = this.bubbles.filter(b => b.expire > now + 300).sort((a, c) => a.born - c.born);
     for (const b of live.slice(0, Math.max(0, live.length - (this.maxBubbles - 1)))) b.expire = now + 300;
     const el = document.createElement('div');
-    el.className = 'bubble' + (kind === 'inner' ? ' inner' : kind === 'letter' ? ' letter' : kind === 'deed' ? ' deed' : '');
+    el.className = 'bubble' + (kind === 'inner' ? ' inner' : kind === 'letter' ? ' letter' : kind === 'deed' ? ' deed'
+      : kind === 'react' ? ' react' : kind === 'clue' ? ' deed clue' : '');
     const head = document.createElement('span');
     head.className = 'to';
     const dot = document.createElement('i');
     dot.style.background = f.color;
-    head.append(dot, kind === 'say' && toName ? `${f.name} → ${toName}` : kind === 'inner' ? `${f.name} (to themselves)` : f.name);
+    head.append(dot, kind === 'say' && toName ? `${f.name} → ${toName}` : kind === 'inner' ? `${f.name} (thinking)` : f.name);
     el.append(head);
     el.append(document.createTextNode(text.length > 190 ? text.slice(0, 187) + '…' : text));
     this.overlay.append(el);
     const life = clamp(2500 + text.length * 45, 3500, 9000);
     this.bubbles.push({ id, el, born: now, expire: now + life });
-    if (kind === 'say') f.talkUntil = now + Math.min(life, 1800 + text.length * 35);
+    if (kind === 'say' || kind === 'react') f.talkUntil = now + Math.min(life, 1800 + text.length * 35);
   }
 
   pop(id, text) {
@@ -942,6 +1114,7 @@ export class IslandScene {
       p.eventActive = active.has(id);
       p.label.el.classList.toggle('event', p.eventActive);
     }
+    if (this.built) this._eventVisuals(events);
   }
 
   _sky(t) {
@@ -1072,6 +1245,7 @@ export class IslandScene {
       p.ring.scale.setScalar(1 + (p.eventActive ? Math.sin(t * 3) * 0.04 : 0));
     }
     for (const f of this.figures.values()) this._animate(f, now, t);
+    this._animateEventFx(t);
     this._camera(now);
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
@@ -1086,6 +1260,7 @@ export class IslandScene {
       if (!f.group.visible) { f.tag.style.display = 'none'; continue; }
       this._project(f.group.position, f.tag, 2.35);
     }
+    for (const fx of this.eventFx.values()) if (fx.tag) this._project(fx.anchor, fx.tag, 0);
     this.bubbles = this.bubbles.filter(b => {
       const f = this.figures.get(b.id);
       if (!f || now > b.expire + 450) { b.el.remove(); return false; }
@@ -1105,6 +1280,9 @@ export class IslandScene {
         if (!hit) break;
         y = hit.y - hit.h - 8;
       }
+      const W = this.overlay.clientWidth;                              // keep it inside the frame (9:16 too)
+      x = clamp(x, w / 2 + 8, Math.max(w / 2 + 8, W - w / 2 - 8));
+      b.el.style.left = `${x}px`;
       b.el.style.top = `${y}px`;
       if (y - h < 64) { b.el.style.display = 'none'; continue; }     // would hide under the top bar
       placed.push({ x, y, w, h });

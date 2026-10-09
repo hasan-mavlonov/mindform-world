@@ -1,6 +1,7 @@
 """The world's LLM paths (planner, narrator, director) against a fake OpenAI-compatible
 endpoint: the request shape, the use of the model's answer, and the fallback to rules."""
 import json
+import json as json_module
 
 import httpx
 import pytest
@@ -19,6 +20,7 @@ class FakeModel:
         self.requests = []
         self.fail = False
         self.status = 200
+        self.voice_line = None
 
     def __call__(self, url, json=None, headers=None, timeout=None):
         self.requests.append({"url": url, "json": json, "headers": headers})
@@ -32,6 +34,10 @@ class FakeModel:
             content = '<thought>hmm</thought>{"action": "talk", "person": "rex", "say": "Rex, about the pier...", "intent": "wants an ally"}'
         elif "lived experience" in system:
             content = '```json\n{"text": "I said hello to Rex by the fountain. He nodded."}\n```'
+        elif "exact words ONE island resident" in system:
+            self.lines = getattr(self, "lines", 0) + 1
+            line = self.voice_line or f"Line {self.lines}: the pier again, of all things."
+            content = json_module.dumps({"line": line})
         elif "DIRECTOR" in system:
             content = '{"title": "Whale sighting", "text": "A whale surfaced off the dock.", "place": "dock", "minutes": 90, "target": null}'
         else:
@@ -120,3 +126,23 @@ def test_rejected_key_is_not_hammered(fake):
     assert len(fake.requests) == 1                 # cooled down: no more HTTP calls
     snap = stats.snapshot()
     assert snap["failures"] == 6 and "rejected" in snap["last_error"]
+
+
+def test_llm_voice_writes_the_lines_and_the_guard_still_holds(fake, tmp_path):
+    manager = WorldManager(tmp_path / "worlds")
+    try:
+        world = manager.create(control_setup(world_brain="llm"), background=False)
+        for _ in range(3):
+            world.run_beat()
+        rows = [json.loads(line) for line in (world.dir / "experiences.jsonl").read_text().splitlines()]
+        assert any(r.get("voice") == "llm" for r in rows)
+        voice_prompts = [r for r in fake.requests if "exact words ONE island resident" in r["json"]["messages"][0]["content"]]
+        assert voice_prompts and "VOICE:" in voice_prompts[0]["json"]["messages"][1]["content"]
+
+        fake.voice_line = "Same thing every time."          # a model stuck on one line: the guard refuses it
+        for _ in range(3):
+            world.run_beat()
+        said = [i["text"] for i in world.feed if i["kind"] in ("say", "reaction") and i["text"] == "Same thing every time."]
+        assert len(said) <= 1
+    finally:
+        manager.shutdown()

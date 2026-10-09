@@ -7,7 +7,9 @@
     POST /api/worlds/{id}/run              {"running": bool}
     POST /api/worlds/{id}/step             one beat while paused
     POST /api/worlds/{id}/speed            {"speed": 0.5 | 1 | 2 | 4 | 0 (as fast as possible)}
-    POST /api/worlds/{id}/inject           god mode: {"kind": "whisper"|"event", "text", "target", "place", "minutes"}
+    POST /api/worlds/{id}/inject           god mode: {"kind": "whisper"|"event", "text", "target", "place", "minutes", "force"}
+    POST /api/worlds/{id}/preset           god mode, one click: {"preset": "storm"|"stranger"|"expose"|"fire"|
+                                           "festival"|"rumor"|"fired", "target"?, "place"?}
     GET  /api/worlds/{id}/residents/{rid}  one resident in full (incl. the mind's raw snapshot)
     GET  /api/worlds/{id}/experiences      the experience log (optionally ?resident=)
     POST /api/worlds/{id}/clone            same cast, new world: {"seed", "world_brain", "mind_llm", "name"}
@@ -36,7 +38,7 @@ from app.world.manager import SetupError, WorldManager
 from app.world.places import public_map
 
 ROOT = Path(__file__).resolve().parent.parent
-APP_VERSION = "0.3.0"        # bump when client + API change together: open pages reload themselves
+APP_VERSION = "0.4.0"        # bump when client + API change together: open pages reload themselves
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("mindform.world.app")
 
@@ -188,7 +190,17 @@ def inject(wid: str, body: dict = Body(...)):
     try:
         return world.inject(body.get("kind", "event"), body.get("text", ""), target=body.get("target"),
                             place=body.get("place") or None, minutes=int(body.get("minutes") or 120),
-                            title=body.get("title"))
+                            title=body.get("title"), force=bool(body.get("force")))
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+
+
+@app.post("/api/worlds/{wid}/preset")
+def preset(wid: str, body: dict = Body(...)):
+    world = _world(wid)
+    try:
+        return world.preset(str(body.get("preset") or ""), target=body.get("target") or None,
+                            place=body.get("place") or None)
     except ValueError as exc:
         raise HTTPException(400, detail=str(exc))
 

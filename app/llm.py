@@ -4,11 +4,19 @@ Same discipline as MindForm: the LLM is primary, never required. ``complete_json
 on anything short of a parsed JSON object (no key, transport error, unparseable reply) and
 every caller falls back to its rules. Speaks plain HTTP through httpx, so the world needs
 no provider SDK; any OpenAI-compatible endpoint works (Gemini by default).
+
+Built so a recording never stalls on the API:
+    * transient failures (timeouts, connection drops, 429, 5xx) are retried with exponential
+      backoff and jitter, honouring Retry-After;
+    * a rejected key (401/403) is not retried, and calls skip the API for a few minutes;
+    * after several transient failures in a row the circuit opens: for a short while every
+      call fails fast (callers use their rules at once), then one call tries the API again.
 """
 from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 import threading
 import time
@@ -31,6 +39,13 @@ class LLMUnavailable(RuntimeError):
 
 AUTH_COOLDOWN = 300.0         # after a 401/403, skip calls for this long instead of hammering
 _auth_blocked_until: dict[str, float] = {}
+RETRY_BASE_DELAY = 0.6        # seconds; doubled per attempt, plus jitter (tests set 0)
+RETRY_MAX_DELAY = 8.0
+CIRCUIT_FAILURES = 4          # transient failures in a row that open the circuit
+CIRCUIT_COOLDOWN = 45.0       # seconds the API is skipped once the circuit is open
+_TRANSIENT_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524, 529}
+_circuit = {"failures": 0, "open_until": 0.0}
+_circuit_lock = threading.Lock()
 
 
 class Stats:
@@ -99,9 +114,40 @@ def parse_json_object(text: str) -> dict:
     raise ValueError("unterminated JSON object in reply")
 
 
+def reset_circuit() -> None:
+    with _circuit_lock:
+        _circuit.update(failures=0, open_until=0.0)
+
+
+def _circuit_open() -> bool:
+    with _circuit_lock:
+        return time.monotonic() < _circuit["open_until"]
+
+
+def _circuit_record(ok: bool) -> None:
+    with _circuit_lock:
+        if ok:
+            _circuit["failures"] = 0
+            return
+        _circuit["failures"] += 1
+        if _circuit["failures"] >= CIRCUIT_FAILURES:
+            _circuit["open_until"] = time.monotonic() + CIRCUIT_COOLDOWN
+            _circuit["failures"] = CIRCUIT_FAILURES - 1          # half-open: one more failure re-opens it
+            log.warning("world LLM failing repeatedly; using rules for %ds", CIRCUIT_COOLDOWN)
+
+
+def _retry_after(exc: Exception) -> float | None:
+    response = getattr(exc, "response", None)
+    value = response.headers.get("retry-after") if response is not None else None
+    try:
+        return float(value) if value else None
+    except ValueError:
+        return None
+
+
 def complete_json(system: str, user: str, *, temperature: float = 0.8,
-                  max_tokens: int = JSON_MAX_TOKENS, timeout: float = 60.0,
-                  retries: int = 1, stats: Stats | None = None) -> dict:
+                  max_tokens: int = JSON_MAX_TOKENS, timeout: float = 45.0,
+                  retries: int = 2, stats: Stats | None = None) -> dict:
     """Ask the configured chat model for a JSON object. Raises on failure (callers fall back)."""
     cfg = llm_settings()
     if not cfg["api_key"]:
@@ -110,11 +156,16 @@ def complete_json(system: str, user: str, *, temperature: float = 0.8,
         if stats:
             stats.record(False, "API key rejected (HTTP 401/403); retrying in a few minutes")
         raise LLMUnavailable("API key was rejected recently")
+    if _circuit_open():
+        if stats:
+            stats.record(False, "LLM paused after repeated failures; using rules for a moment")
+        raise LLMUnavailable("LLM circuit open after repeated failures")
     url = cfg["base_url"].rstrip("/") + "/chat/completions"
     headers = {"Authorization": f"Bearer {cfg['api_key']}"}
     last: Exception | None = None
+    nudge = False
     for attempt in range(retries + 1):
-        content = user if attempt == 0 else user + _JSON_NUDGE
+        content = user + _JSON_NUDGE if nudge else user
         payload = {
             "model": cfg["model"],
             "messages": [{"role": "system", "content": system},
@@ -122,6 +173,7 @@ def complete_json(system: str, user: str, *, temperature: float = 0.8,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        transient = False
         try:
             response = httpx.post(url, json=payload, headers=headers, timeout=timeout)
             response.raise_for_status()
@@ -129,6 +181,7 @@ def complete_json(system: str, user: str, *, temperature: float = 0.8,
             result = parse_json_object(text)
             if stats:
                 stats.record(True)
+            _circuit_record(True)
             return result
         except Exception as exc:          # transport, HTTP status, shape, or parse
             last = exc
@@ -139,5 +192,16 @@ def complete_json(system: str, user: str, *, temperature: float = 0.8,
                 _auth_blocked_until[cfg["api_key"]] = time.monotonic() + AUTH_COOLDOWN
                 log.warning("world LLM rejected the API key (HTTP %s); using rules for %ds", status, AUTH_COOLDOWN)
                 break
+            if status is not None and status not in _TRANSIENT_STATUS:
+                break                                # 400/404/422...: asking again will not help
+            transient = status is not None or isinstance(exc, httpx.TransportError)
+            nudge = not transient                    # a reply we could not parse: ask for bare JSON
             log.info("world LLM call failed (attempt %d/%d): %s", attempt + 1, retries + 1, exc)
+            if transient:
+                _circuit_record(False)
+                if _circuit_open():
+                    break
+            if attempt < retries:
+                delay = _retry_after(exc) or RETRY_BASE_DELAY * (2 ** attempt) * (1 + 0.3 * random.random())
+                time.sleep(min(RETRY_MAX_DELAY, delay))
     raise last  # type: ignore[misc]

@@ -86,6 +86,24 @@ LETTERS = [
     (3, "An unsigned letter says: 'I know why you really came to this island.'"),
 ]
 
+# How people refer to each event in conversation ("did you hear about ...?").
+TOPICS = {
+    "Dolphins off the beach": "the dolphins off the beach", "A street musician": "the accordion player in the plaza",
+    "The café oven broke": "the broken café oven", "Strawberries at the market": "the strawberries at the market",
+    "A lost dog": "that lost dog in the plaza", "Free books": "the free books at the library",
+    "Power cut": "the power cut", "Sailboat aground": "the sailboat on the rocks",
+    "An anonymous note": "the note on the Town Hall door", "Ferry rumor": "the ferry rumor",
+    "Greenhouse roof cracked": "the cracked greenhouse roof", "Flowers on the fountain": "the flowers on the fountain",
+    "Film crew at the lighthouse": "the film crew at the lighthouse", "Boat overdue": "the missing fishing boat",
+    "Fire at the boatyard": "the fire at the boatyard", "Child missing near the cliffs": "the missing child",
+    "Greenhouse to be demolished": "the greenhouse being torn down", "A stranger asking questions": "the stranger asking questions",
+    "Boat overdue -- resolved": "the boat making it back", "Child missing near the cliffs -- resolved": "the child being found",
+    "Fire at the boatyard -- resolved": "the boatyard fire", "Beach bonfire": "the bonfire tonight",
+    "Town meeting about the new pier": "the pier meeting", "Lantern festival": "the lantern festival",
+    "Market fair": "the market fair", "Harbor regatta": "the regatta", "Film night at the library": "film night at the library",
+    "No ferry": "the ferry not coming", "Ferry arrived": "the ferry",
+}
+
 _INCIDENT_RATE = {1: 0.06, 2: 0.14, 3: 0.24}     # chance per hour
 _LETTER_RATE = {1: 0.12, 2: 0.25, 3: 0.35}       # chance per ferry
 
@@ -100,7 +118,8 @@ can see or hear, in one or two plain sentences.
 
 Return JSON only:
 {"title": "short title", "text": "what people perceive", "place": "<place id or null for island-wide>",
- "minutes": <duration 30-600>, "target": "<resident id for a private event, else null>"}"""
+ "minutes": <duration 30-600>, "target": "<resident id for a private event, else null>",
+ "topic": "<how people would refer to it in conversation, a noun phrase like 'the whale in the harbor'>"}"""
 
 
 def next_weather(rng: random.Random, current: str) -> str:
@@ -125,9 +144,13 @@ def incident_due(rng: random.Random, intensity: int) -> bool:
     return rng.random() < _INCIDENT_RATE.get(intensity, 0.14)
 
 
-def pick_incident(rng: random.Random, intensity: int, now: int, resident_names: list[str]) -> dict:
-    """Rules mode: one incident from the deck, no stronger than ``intensity``."""
+def pick_incident(rng: random.Random, intensity: int, now: int, resident_names: list[str],
+                  exclude: set[str] | None = None) -> dict:
+    """Rules mode: one incident from the deck, no stronger than ``intensity`` and none of the
+    titles in ``exclude`` (what happened recently) while anything else is left."""
     pool = [i for i in INCIDENTS if i[0] <= intensity and ("{target}" not in i[4] or resident_names)]
+    fresh = [i for i in pool if i[1] not in (exclude or set())]
+    pool = fresh or pool
     level, title, place, minutes, text = rng.choice(pool)
     if "{target}" in text:
         text = text.replace("{target}", rng.choice(resident_names))
@@ -145,11 +168,21 @@ def follow_up(event: dict) -> dict | None:
             "end": start + minutes, "text": text, "kind": "incident"}
 
 
-def roll_letter(rng: random.Random, intensity: int, resident_ids: list[str]) -> tuple[str, str] | None:
+def roll_letter(rng: random.Random, intensity: int, resident_ids: list[str],
+                sent: list[list[str]] | None = None) -> tuple[str, str] | None:
+    """A letter for someone, or None. ``sent`` = [[resident id, text], ...] already delivered:
+    nobody gets the same letter twice, and a letter isn't reused while others are left."""
     if not resident_ids or rng.random() >= _LETTER_RATE.get(intensity, 0.25):
         return None
+    sent = sent or []
+    rid = rng.choice(resident_ids)
     pool = [text for level, text in LETTERS if level <= intensity]
-    return rng.choice(resident_ids), rng.choice(pool)
+    mine = {t for r, t in sent if r == rid}
+    used = {t for _, t in sent[-6:]}
+    fresh = [t for t in pool if t not in mine and t not in used] or [t for t in pool if t not in mine]
+    if not fresh:
+        return None
+    return rid, rng.choice(fresh)
 
 
 def llm_event(context: dict, stats: llm.Stats | None = None) -> dict:
@@ -169,5 +202,6 @@ def llm_event(context: dict, stats: llm.Stats | None = None) -> dict:
     except (TypeError, ValueError):
         minutes = 120
     target = data.get("target")
+    topic = str(data.get("topic") or "").strip()[:80]
     return {"title": title, "text": text, "place": place, "minutes": minutes,
-            "target": target if isinstance(target, str) else None}
+            "target": target if isinstance(target, str) else None, "topic": topic or None}
