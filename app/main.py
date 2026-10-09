@@ -15,8 +15,9 @@
     GET  /api/worlds/{id}/export           the whole world folder as a zip
 
 Old cached pages: the pre-0.2 demo client polled /api/state and /api/step. A browser can keep that
-page cached and never ask for "/" again, so those two endpoints answer it in its own format with
-"reload this page", and tell the browser to drop its cached copy (Clear-Site-Data).
+page cached and never ask for "/" again, so those endpoints answer it in its own format: they
+send it on to the new start screen by itself, show "reload this page" in case that can't happen,
+and tell the browser to drop its cached copy (Clear-Site-Data).
 """
 from __future__ import annotations
 
@@ -84,30 +85,43 @@ LEGACY_NOTICE = ("MindForm World was upgraded and this tab is an old cached copy
 _legacy_warned = False
 
 
-def _legacy_page(clear_cache: bool) -> JSONResponse:
-    """Answer the pre-0.2 client in the shape it renders (its 'mode' badge + activity feed)."""
+# The old client selects the resident "aya" at start and renders that resident's description into
+# its inspector as HTML -- the one place it can be told to open the new page itself. The image is
+# undecodable on purpose: its error handler navigates to a URL no cache has ever seen.
+_OPEN_NEW_VERSION = ('<img alt="" hidden src="data:image/png;base64,AA==" '
+                     'onerror="location.replace(\'/?fresh=\'+Date.now())">')
+_LEGACY_RESIDENT = {
+    "id": "aya", "name": "Opening the new version", "color": "#a8f5b8", "role": "MindForm World",
+    "mood": "upgraded", "personality": LEGACY_NOTICE + _OPEN_NEW_VERSION, "traits": {},
+    "x": 0.0, "z": 0.0, "destination": "plaza", "activity": "Opening the new version...",
+    "memories": [], "relationships": {}, "completed_visits": 0,
+}
+
+
+def _legacy_page() -> JSONResponse:
+    """Answer the pre-0.2 client in the shape it renders: it shows the notice and, through its
+    inspector, sends itself to the new start screen (lobby: choose a world, create residents)."""
     global _legacy_warned
     if not _legacy_warned:
         _legacy_warned = True
-        log.warning("A browser tab is running an old cached MindForm World page (it asked for /api/state). "
-                    "Reload that tab: Cmd+Shift+R.")
-    payload = {"tick": 0, "mode": "upgraded: reload this page", "agents": [],
+        log.warning("A browser tab was showing an old cached MindForm World page; it is being sent to the "
+                    "new version. If it is still old, reload it: Cmd+Shift+R.")
+    payload = {"tick": 0, "mode": "upgraded: opening the new version", "agents": [_LEGACY_RESIDENT],
                "events": [{"tick": 0, "actor": "world", "message": LEGACY_NOTICE}]}
-    headers = {"Cache-Control": "no-store"}
-    if clear_cache:
-        headers["Clear-Site-Data"] = '"cache"'    # the next plain reload fetches the new files
-    return JSONResponse(payload, headers=headers)
+    # Only an old cached page ever calls these, so also drop that cached copy: a later visit to
+    # the plain URL then loads the new files instead of the old page again.
+    return JSONResponse(payload, headers={"Cache-Control": "no-store", "Clear-Site-Data": '"cache"'})
 
 
 @app.get("/api/state")
 def legacy_state():
-    return _legacy_page(clear_cache=True)
+    return _legacy_page()
 
 
 @app.post("/api/step")
 @app.post("/api/reset")
 def legacy_step():
-    return _legacy_page(clear_cache=False)
+    return _legacy_page()
 
 
 @app.get("/api/health")

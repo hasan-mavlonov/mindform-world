@@ -49,10 +49,11 @@ pip install -r requirements.txt
   `.env`. You can also set a separate key in this repo's `.env`.
 - **Three.js loads from the jsDelivr CDN**, so the browser needs internet access. The GPU only
   renders the island.
-- **The page looks like the old demo, or the terminal says a tab is running an old cached
-  page?** Your browser kept the previous version. That tab now shows "upgraded: reload this
-  page". Reload it once (Cmd+Shift+R). The new version is never cached, and an open tab reloads
-  itself when the server is upgraded.
+- **You see the old demo (World Overview, Agent Inspector, no way to create people)?** Your
+  browser kept the previous version in its cache. A cached old page now sends itself to the new
+  start screen. A tab that was already open while the server restarted has stopped polling:
+  click its **Resume** button or reload (Cmd+Shift+R). The new version is never cached, and an
+  open tab reloads itself whenever the server is upgraded.
 
 ## Making a world
 
