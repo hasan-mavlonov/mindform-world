@@ -104,10 +104,17 @@ def test_old_cached_page_is_told_to_reload(client):
     r = client.get("/api/state")
     assert r.status_code == 200 and r.headers["clear-site-data"] == '"cache"'
     data = r.json()
-    assert data["agents"] == [] and "reload" in data["events"][0]["message"].lower()
-    assert "reload" in data["mode"]                      # the old page shows this in its top bar
-    step = client.post("/api/step?n=1")
-    assert step.status_code == 200 and "clear-site-data" not in step.headers
+    assert "reload" in data["events"][0]["message"].lower()
+    assert "new version" in data["mode"]                  # the old page shows this in its top bar
+    # ...and it sends itself to the new start screen: the old client renders the resident it
+    # selects at start ("aya") into its inspector as HTML.
+    aya = next(a for a in data["agents"] if a["id"] == "aya")
+    assert "location.replace('/?fresh='" in aya["personality"]
+    for key in ("name", "color", "role", "mood", "traits", "x", "z", "memories", "completed_visits"):
+        assert key in aya
+    step = client.post("/api/step?n=1")                  # an old tab that was already open
+    assert step.status_code == 200 and step.headers["clear-site-data"] == '"cache"'
+    assert any(a["id"] == "aya" for a in step.json()["agents"])
     assert client.post("/api/reset").status_code == 200
 
 
