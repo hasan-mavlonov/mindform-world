@@ -68,6 +68,11 @@ def validate_setup(setup: dict) -> dict:
         seed = int(setup.get("seed", 431))
     except (TypeError, ValueError):
         raise SetupError("seed must be a whole number")
+    if version == "mindform_v0" and setup.get("mind_llm"):
+        from app.minds import mindform_v0                   # fail loudly, before anyone is born
+        problem = mindform_v0.llm_problem(config.v0_path())
+        if problem:
+            raise SetupError(problem)
     return {
         "name": (setup.get("name") or "").strip()[:60] or "Halcyon Isle",
         "version": version,
@@ -145,6 +150,7 @@ class WorldManager:
             world.mind = make_mind(world.setup["version"], wdir / "minds", world.mind_llm)
             try:
                 world.mind.start()
+                world.check_mind()
             except Exception as exc:
                 world.status, world.error = "error", f"could not start the mind: {exc}"
         world.start_loop()

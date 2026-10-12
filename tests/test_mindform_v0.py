@@ -76,3 +76,74 @@ def test_v0_ignores_proxy_settings(tmp_path, monkeypatch):
     finally:
         mind.stop()
         proxy.shutdown()
+
+
+# --- the API key reaches v0; problems are said out loud -----------------------------------
+import app.config as config  # noqa: E402
+from app.minds import mindform_v0  # noqa: E402
+from app.minds.base import MindError  # noqa: E402
+from app.world.manager import SetupError, validate_setup  # noqa: E402
+
+
+def test_the_worlds_key_reaches_v0(tmp_path, monkeypatch):
+    """A key in mindform-world/.env (the world's settings) is passed to v0's process."""
+    monkeypatch.setattr(config, "llm_settings", lambda: {"api_key": "world-key", "base_url": "https://x/v1/", "model": "m-1"})
+    env = mindform_v0._base_env(tmp_path, True)                 # tmp_path: a v0 without its own .env
+    assert env["LLM_API_KEY"] == "world-key" and env["LLM_MODEL"] == "m-1"
+    offline = mindform_v0._base_env(tmp_path, False)
+    assert not any(offline.get(k) for k in mindform_v0._KEY_VARS)
+
+
+def test_v0s_own_key_wins(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("GEMINI_API_KEY=v0-key\n")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(config, "llm_settings", lambda: {"api_key": "world-key", "base_url": "", "model": ""})
+    env = mindform_v0._base_env(tmp_path, True)
+    assert env["GEMINI_API_KEY"] == "v0-key" and not env.get("LLM_API_KEY")
+
+
+def test_llm_mode_refuses_to_start_without_a_key(tmp_path):
+    with pytest.raises(MindError, match="GEMINI_API_KEY"):
+        mindform_v0.MindFormV0(tmp_path / "minds", use_llm=True).start()
+    with pytest.raises(SetupError, match="GEMINI_API_KEY"):
+        validate_setup(control_setup(version="mindform_v0", mind_llm=True))
+
+
+def test_llm_mode_refuses_without_the_openai_package(tmp_path, monkeypatch):
+    monkeypatch.setattr(mindform_v0, "health", lambda path=None: {
+        "key": True, "missing": ["openai"], "python": "/usr/bin/python3", "llm_ready": False, "memory": False})
+    assert "setup.sh" in mindform_v0.llm_problem(tmp_path)
+
+
+def test_fallback_reasons_come_from_v0s_log(tmp_path):
+    mind = mindform_v0.MindFormV0(tmp_path, use_llm=False)
+    (tmp_path / "mindform_v0.log").write_text(
+        "2026 nodes.llm_appraisal LLM appraisal unavailable (no LLM API key is set (GEMINI_API_KEY)); using offline appraiser\n"
+        "2026 web.engine_bridge memory/encoder unavailable (No module named 'sentence_transformers'); skipping recurrence/recall\n"
+        "2026 nodes.llm_impact LLM push unavailable (Error code: 400 - API key not valid. Please pass a valid API key.); using heuristic fallback\n")
+    diag = mind.diagnose()
+    assert diag["llm"] == "the API key was rejected — check GEMINI_API_KEY"
+    assert "setup.sh" in diag["memory"]
+
+
+def test_health_reports_what_v0s_python_has():
+    h = mindform_v0.health()
+    assert set(h) >= {"python", "key", "missing", "llm_ready", "memory"}
+    assert h["memory"] == ("sentence_transformers" not in h["missing"] and "torch" not in h["missing"])
+
+
+def test_memory_recall_runs_when_installed(tmp_path):
+    """With sentence-transformers in v0's Python (./setup.sh), experiences are stored and recalled."""
+    if not mindform_v0.health().get("memory"):
+        pytest.skip("sentence-transformers not installed in v0's Python (run ./setup.sh)")
+    mind = make_mind("mindform_v0", tmp_path / "minds", use_llm=False)
+    mind.start()
+    try:
+        mind.create({"mode": "manual", "identity": {"name": "Ines"}, "levels": {}})
+        for text in ("I fixed the fishing boat's hull at the boatyard.", "I repaired another boat hull at the boatyard."):
+            mind.experience("Ines", text)
+    finally:
+        mind.stop()
+    log_text = (tmp_path / "minds" / "mindform_v0.log").read_text()
+    assert "memory/encoder unavailable" not in log_text
+    assert list((tmp_path / "minds" / "data").rglob("*memor*")), "no memory files were written"

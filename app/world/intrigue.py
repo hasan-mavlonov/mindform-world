@@ -343,10 +343,31 @@ def knows_secret(r, holder) -> bool:
 
 
 # ---- what to talk about ----------------------------------------------------------------------------
-def choose_topic(speaker, listener, world, rng: random.Random) -> dict:
+NEWS = {"gossip", "confront", "probe", "confide", "event"}      # worth breaking a pair's cooldown for
+
+
+def has_news(speaker, listener, world, since: int) -> bool:
+    """Whether the speaker has something genuinely new for the listener since ``since``
+    (island minutes): gossip they haven't heard, a secret to confront them with, a suspicion
+    to fish about, or big news that broke after they last spoke."""
+    if gossip_for(speaker, listener, world.residents, random.Random(0)):
+        return True
+    if listener.secret and not listener.secret.get("exposed"):
+        if knows_secret(speaker, listener):
+            confided = any(f["about"] == listener.id and f["secret"] and f["src"] == "confided" for f in speaker.knowledge)
+            if not confided and speaker.id not in listener.secret.get("confronted_by", []):
+                return True
+        elif suspicion_of(speaker, listener.id) >= 0.3:
+            return True
+    big = world.headline_event()
+    return bool(big and big.get("force") and big["start"] > since)
+
+
+def choose_topic(speaker, listener, world, rng: random.Random, *, only: set | None = None) -> dict:
     """The world's pick of what an opening line is about. Returns
     {"intent": open|gossip|confide|confront|probe|goal|comfort|event|outcome|weather|warm|cool,
-     ...slot data}. The mind supplies the feeling; this only supplies the subject."""
+     ...slot data}. The mind supplies the feeling; this only supplies the subject. ``only``
+    limits it to those intents (a pair that just talked only starts again for news)."""
     rel = normalize_rel(speaker.relationships.setdefault(listener.id, new_rel()))
     traits = trait_dict(speaker.state)
     E, A, N = traits["E"], traits["A"], traits["N"]
@@ -354,7 +375,7 @@ def choose_topic(speaker, listener, world, rng: random.Random) -> dict:
     options: list[tuple[float, dict]] = []
 
     def add(w: float, topic: dict):
-        if w > 0 and topic["intent"] != last:
+        if w > 0 and topic["intent"] != last and (only is None or topic["intent"] in only):
             options.append((w, topic))
 
     if listener.secret and knows_secret(speaker, listener):

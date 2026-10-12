@@ -41,6 +41,18 @@ def _world_env() -> dict[str, str]:
     return parse_dotenv(ROOT / ".env")
 
 
+def load_world_env() -> list[str]:
+    """Put this repo's ``.env`` into the process environment at startup (variables already in
+    the environment win), so everything the world starts -- MindForm v0's process included -- sees
+    the same settings. Returns the names it filled in."""
+    filled = []
+    for key, value in _world_env().items():
+        if value and key not in os.environ:          # a variable set in the environment (even empty) wins
+            os.environ[key] = value
+            filled.append(key)
+    return filled
+
+
 def setting(*names: str, default: str | None = None, extra: dict[str, str] | None = None) -> str | None:
     """First non-empty value among ``names`` in env, then the world .env, then ``extra``."""
     sources = [os.environ, _world_env(), extra or {}]

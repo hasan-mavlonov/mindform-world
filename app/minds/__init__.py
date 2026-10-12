@@ -28,6 +28,7 @@ def versions() -> list[dict]:
             "supports_llm": True,
             "creation_modes": ["bio", "manual"],
             "schema": mindform_v0.creation_schema() if v0_ok else mindform_v0._FALLBACK_SCHEMA,
+            "health": mindform_v0.health() if v0_ok else {},
         },
         {
             "id": control.VERSION,

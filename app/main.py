@@ -32,13 +32,13 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from app import llm
+from app import config, llm
 from app.minds import versions
 from app.world.manager import SetupError, WorldManager
 from app.world.places import public_map
 
 ROOT = Path(__file__).resolve().parent.parent
-APP_VERSION = "0.4.0"        # bump when client + API change together: open pages reload themselves
+APP_VERSION = "0.4.1"        # bump when client + API change together: open pages reload themselves
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("mindform.world.app")
 
@@ -47,6 +47,16 @@ manager = WorldManager()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    filled = config.load_world_env()            # mindform-world/.env -> the environment (real env wins)
+    if filled:
+        log.info("loaded from .env: %s", ", ".join(sorted(filled)))
+    from app.minds import mindform_v0
+    if mindform_v0.available()[0]:
+        h = mindform_v0.health()
+        if not h.get("key"):
+            log.warning("MindForm v0 has no LLM API key (set GEMINI_API_KEY in .env): it can only run offline.")
+        if h.get("missing"):
+            log.warning("MindForm v0's Python (%s) is missing %s -- run ./setup.sh", h["python"], ", ".join(h["missing"]))
     yield
     manager.shutdown()
 

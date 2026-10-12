@@ -73,6 +73,12 @@ def available() -> bool:
     return bool(llm_settings()["api_key"])
 
 
+def key_rejected() -> bool:
+    """Whether the configured key was just rejected by the provider (calls are on hold)."""
+    key = llm_settings()["api_key"]
+    return bool(key) and time.monotonic() < _auth_blocked_until.get(key, 0.0)
+
+
 def model_label() -> str:
     return llm_settings()["model"] or "llm"
 
@@ -188,7 +194,13 @@ def complete_json(system: str, user: str, *, temperature: float = 0.8,
             status = getattr(getattr(exc, "response", None), "status_code", None)
             if stats:
                 stats.record(False, f"HTTP {status}" if status else f"{type(exc).__name__}: {exc}")
-            if status in (401, 403):                 # a bad key will not get better on retry
+            body = ""
+            if status == 400:
+                try:
+                    body = exc.response.text.lower()
+                except Exception:
+                    body = ""
+            if status in (401, 403) or (status == 400 and "api key" in body):   # a bad key won't get better
                 _auth_blocked_until[cfg["api_key"]] = time.monotonic() + AUTH_COOLDOWN
                 log.warning("world LLM rejected the API key (HTTP %s); using rules for %ds", status, AUTH_COOLDOWN)
                 break

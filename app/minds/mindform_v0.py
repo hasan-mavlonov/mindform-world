@@ -12,20 +12,34 @@ lets two worlds run v0 in different modes side by side:
 
 ``PYTHONHASHSEED`` is pinned so v0's offline reply (which varies its wording by
 ``hash(text)``) is reproducible run to run.
+
+The API key: v0 reads ``LLM_API_KEY`` / ``GEMINI_API_KEY`` from its environment (or from a
+``.env`` in its working directory -- which is the world's folder, so v0's own ``.env`` is
+read here and passed on). If neither v0's ``.env`` nor the environment has one, the world's
+own key (this repo's ``.env``) is passed, so one key in ``mindform-world/.env`` powers both.
+An LLM-mode world refuses to start when no key, or no ``openai`` package, would reach v0 --
+instead of quietly running on v0's heuristics.
+
+What v0 needs to run fully (memory recall needs ``sentence-transformers``) is checked in the
+Python that runs it; ``./setup.sh`` installs it (see requirements-v0.txt).
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import os
+import re
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
 
 import httpx
 
+from app import config
 from app.config import parse_dotenv, v0_path, v0_python
 from app.minds.base import Created, MindError, Turn, summarize_v0
 
@@ -97,6 +111,12 @@ def _base_env(path: Path, use_llm: bool) -> dict[str, str]:
     for key, value in parse_dotenv(path / ".env").items():   # v0's own settings; real env wins
         if not env.get(key):
             env[key] = value
+    if use_llm and not any(env.get(k) for k in _KEY_VARS):
+        cfg = config.llm_settings()                           # the world's key (mindform-world/.env)
+        if cfg["api_key"]:
+            env["LLM_API_KEY"] = cfg["api_key"]
+            env.setdefault("LLM_BASE_URL", cfg["base_url"] or "")
+            env.setdefault("LLM_MODEL", cfg["model"] or "")
     if not use_llm:
         for key in _KEY_VARS:
             env[key] = ""               # v0 treats empty as unset -> deterministic fallbacks
@@ -104,6 +124,87 @@ def _base_env(path: Path, use_llm: bool) -> dict[str, str]:
     env["PYTHONUNBUFFERED"] = "1"
     env.pop("PORT", None)
     return env
+
+
+# What v0 imports at runtime, and what each one is for.
+_RUNTIME = {"openai": "its LLM calls", "numpy": "its memory", "torch": "its trained appraiser and memory",
+            "sentence_transformers": "memory recall (similar past experiences)"}
+_PROBE_SCRIPT = (
+    "import importlib.util, json\n"
+    f"print(json.dumps({{m: importlib.util.find_spec(m) is not None for m in {sorted(_RUNTIME)!r}}}))\n"
+)
+_probe_cache: dict[str, tuple[float, dict]] = {}
+
+
+def runtime_check(path: Path | None = None) -> dict:
+    """Which of v0's runtime packages the Python that runs it has (cached for a minute)."""
+    path = path or v0_path()
+    if path is None:
+        return {}
+    python = v0_python(path)
+    hit = _probe_cache.get(python)
+    if hit and time.monotonic() - hit[0] < 60:
+        return hit[1]
+    try:
+        out = subprocess.run([python, "-c", _PROBE_SCRIPT], capture_output=True, text=True, timeout=30)
+        found = json.loads(out.stdout.strip().splitlines()[-1])
+    except Exception as exc:
+        log.warning("could not check MindForm v0's Python (%s): %s", python, exc)
+        found = {m: importlib.util.find_spec(m) is not None for m in _RUNTIME} if python == sys.executable else {}
+    _probe_cache[python] = (time.monotonic(), found)
+    return found
+
+
+def health(path: Path | None = None) -> dict:
+    """What the lobby shows about v0: can it use its LLM, does it have its memory."""
+    path = path or v0_path()
+    if path is None:
+        return {}
+    found = runtime_check(path)
+    env = _base_env(path, True)
+    key = next((k for k in _KEY_VARS if env.get(k)), None)
+    python = v0_python(path)
+    missing = [m for m in _RUNTIME if found and not found.get(m)]
+    return {
+        "python": python, "key": bool(key), "key_name": key, "missing": missing,
+        "llm_ready": bool(key) and found.get("openai", False),
+        "memory": bool(found.get("sentence_transformers")) and bool(found.get("torch")),
+        "fix": "./setup.sh" if missing else None,
+    }
+
+
+def llm_problem(path: Path) -> str | None:
+    """Why v0 could NOT use its LLM if started now, in words for the user (None = fine)."""
+    h = health(path)
+    if not h.get("key"):
+        return ("MindForm is set to read experiences with its LLM, but no API key would reach it. "
+                "Put GEMINI_API_KEY=... in mindform-world/.env (or mindform_v0/.env) and restart, "
+                "or create the world with 'Offline fallback'.")
+    if h.get("missing") and "openai" in h["missing"]:
+        return (f"MindForm is set to read experiences with its LLM, but the Python that runs it "
+                f"({h['python']}) has no 'openai' package. Run ./setup.sh, then restart.")
+    return None
+
+
+_FALLBACK = re.compile(r"LLM [\w ]*?unavailable \((.*)\); using")
+_MEMORY_OFF = re.compile(r"memory/encoder unavailable \((.*)\); skipping")
+
+
+def explain(raw: str) -> str:
+    """v0's fallback message -> what the user can do about it."""
+    low = raw.lower()
+    if "no llm api key" in low:
+        return "no API key reached MindForm (GEMINI_API_KEY)"
+    if "no module named 'openai'" in low:
+        return "the 'openai' package is missing in the Python that runs MindForm — run ./setup.sh"
+    if (any(x in low for x in ("401", "403", "permission_denied", "unauthorized"))
+            or ("api key" in low and any(x in low for x in ("valid", "expired", "denied", "revoked")))):
+        return "the API key was rejected — check GEMINI_API_KEY"
+    if "429" in low or "resource_exhausted" in low or "quota" in low:
+        return "rate-limited by the API (429) — MindForm uses its heuristics until it recovers"
+    if any(x in low for x in ("timed out", "timeout", "connection", "network", "name resolution")):
+        return "can't reach the LLM API (network)"
+    return raw[:200]
 
 
 def _free_port() -> int:
@@ -132,6 +233,10 @@ class MindFormV0:
     def start(self) -> None:
         if self.proc and self.proc.poll() is None:
             return
+        if self.use_llm:
+            problem = llm_problem(self.path)
+            if problem:
+                raise MindError(problem)
         self.workdir.mkdir(parents=True, exist_ok=True)
         head = self.path / "appraisal_head.pth"            # a trained offline appraiser, if any
         link = self.workdir / "appraisal_head.pth"
@@ -184,6 +289,27 @@ class MindFormV0:
 
     def alive(self) -> bool:
         return bool(self.proc and self.proc.poll() is None)
+
+    def diagnose(self) -> dict:
+        """Why v0 last fell back to its heuristics / skipped memory, from its own log."""
+        out = {}
+        try:
+            lines = (self.workdir / "mindform_v0.log").read_text(errors="replace").splitlines()[-400:]
+        except OSError:
+            return out
+        for line in reversed(lines):
+            if "llm" not in out:
+                m = _FALLBACK.search(line)
+                if m:
+                    out["llm"] = explain(m.group(1))
+            if "memory" not in out:
+                m = _MEMORY_OFF.search(line)
+                if m:
+                    out["memory"] = ("sentence-transformers is not installed in the Python that runs MindForm — run ./setup.sh"
+                                     if "sentence_transformers" in m.group(1) else m.group(1)[:200])
+            if len(out) == 2:
+                break
+        return out
 
     def _log_tail(self, n: int = 25) -> str:
         try:

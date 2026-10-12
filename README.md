@@ -35,18 +35,37 @@ Put this repo next to your MindForm v0 checkout:
 
 ```bash
 cd mindform-world
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-./run.sh                      # http://127.0.0.1:8090
+echo "GEMINI_API_KEY=your-key" > .env     # one key for the world AND MindForm
+./run.sh                                  # http://127.0.0.1:8090
 ```
 
+**`./run.sh` sets itself up.** The first time, it runs `./setup.sh`, which:
+- creates `.venv` and installs the world's requirements;
+- installs what MindForm v0 needs at runtime (`openai`, `numpy`, `torch`,
+  `sentence-transformers` — see `requirements-v0.txt`) into the Python that runs v0.
+
+After that, `./run.sh` only checks; it installs again only if something goes missing. Run
+`./setup.sh` yourself any time to repair.
+
+- **Why not v0's own `requirements.txt`?** It pins Linux-only CUDA packages (`nvidia-*`,
+  `triton`) that fail on a Mac. When they fail, `sentence-transformers` never gets installed,
+  and v0's memory recall silently turns off ("No module named 'sentence_transformers'").
 - **No MindForm code is copied in.** For each world, MindForm World starts MindForm v0's own
   cockpit server (`console.py`) as a separate process. It runs inside the world's own folder,
   so every world has its own roster, memories and logs. Your console characters are never touched.
-- **v0 runs on v0's own Python** (`mindform_v0/.venv` if it exists) with v0's own `.env`.
-- **A different location?** Copy `.env.example` to `.env` and set `MINDFORM_V0_PATH`.
-- **The world's LLM** (planner, narrator, director) reuses the API key from MindForm v0's
-  `.env`. You can also set a separate key in this repo's `.env`.
+- **v0 runs on v0's own Python** (`mindform_v0/.venv` if it exists, else this repo's `.venv`;
+  `MINDFORM_V0_PYTHON` overrides).
+- **One key powers both.** `GEMINI_API_KEY` in this repo's `.env` is loaded at startup and
+  passed to MindForm v0's process. A key in `mindform_v0/.env` works too, and wins if both are
+  set.
+- **MindForm never quietly goes offline.**
+  - The start screen shows whether MindForm has a key, its LLM client and its memory recall.
+  - A world set to "MindForm reads with LLM" refuses to start when no key, or no `openai`
+    package, would reach it, and says which.
+  - If MindForm falls back to its offline heuristics mid-run (key rejected, rate-limited,
+    network), a red banner names v0's own reason.
+  - The same banner shows a rejected key for the world's own LLM.
+- **A different location?** Set `MINDFORM_V0_PATH` in `.env`.
 - **Three.js loads from the jsDelivr CDN**, so the browser needs internet access. The GPU only
   renders the island.
 - **You see the old demo (World Overview, Agent Inspector, no way to create people)?** Your
@@ -232,6 +251,11 @@ Now each resident says MindForm's reading in their own way.
   - Two residents whose walks cross on the road exchange a line in passing, shown mid-walk.
   - What they talk about is the world's pick: the news, gossip, a goal, a worry, how the other
     looks.
+  - **No greeting loops.** A conversation can run up to 3 beats in a row. After that, the same
+    two don't start another for 2 island hours, unless one has real news: gossip, a secret to
+    confront, a suspicion, or a big event since they last spoke.
+    - The planners see this ("talked 15 min ago").
+    - Bumping into each other or crossing paths respects it too.
 - **Gossip.** Residents pass on what they know about each other: things they saw, rumors,
   secrets they heard.
 - **Secrets** shape what a resident does and thinks:
@@ -359,7 +383,7 @@ to `app/minds/__init__.py`. The lobby, the planner and the inspector pick it up 
 ## Tests
 
 ```bash
-pytest -q          # set MINDFORM_V0_PATH (or keep the sibling checkout) to include the v0 integration tests
+.venv/bin/python -m pytest -q    # set MINDFORM_V0_PATH (or keep the sibling checkout) to include the v0 integration tests
 ```
 
 ## How this compares to Emergence World

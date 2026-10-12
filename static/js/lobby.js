@@ -81,9 +81,9 @@ export class Lobby {
     pill.className = 'pill ' + (llm.available ? 'ok' : 'warn');
     pill.textContent = llm.available ? `LLM ready · ${llm.model}` : 'No LLM key · rules & offline only';
     this.state.brain = llm.available ? 'llm' : 'rules';
-    this.state.mind = llm.available ? 'llm' : 'offline';
     const first = this.status.versions.find(v => v.available);
     this.state.version = first ? first.id : null;
+    this.state.mind = llm.available && this.mindLLMProblem() === null ? 'llm' : 'offline';
     this.renderVersions();
     this.segs();
     this.paceText();
@@ -109,13 +109,27 @@ export class Lobby {
 
   get version() { return this.status?.versions.find(v => v.id === this.state.version); }
 
+  // Why MindForm can't read with its LLM on this machine (null = it can).
+  mindLLMProblem() {
+    const h = this.version?.health;
+    if (!h || h.key === undefined) return null;
+    if (!h.key) return 'no API key reaches MindForm — put GEMINI_API_KEY=… in mindform-world/.env and restart';
+    if ((h.missing || []).includes('openai')) return `the Python that runs MindForm (${h.python}) has no 'openai' package — run ./setup.sh`;
+    return null;
+  }
+
   renderVersions() {
     const box = this.$('#versions');
     box.replaceChildren();
     for (const v of this.status.versions) {
+      const h = v.health || {};
+      const healthRow = v.available && h.key !== undefined ? el('div', { class: 'health' },
+        el('span', { class: h.llm_ready ? 'ok' : 'bad' }, h.llm_ready ? `✓ LLM key (${h.key_name})` : (h.key ? '✗ openai missing' : '✗ no API key')),
+        el('span', { class: h.memory ? 'ok' : 'bad' }, h.memory ? '✓ memory recall' : '✗ memory recall off'),
+        (h.missing || []).length ? el('small', {}, `missing in ${h.python}: ${h.missing.join(', ')} — run ./setup.sh`) : null) : null;
       const card = el('button', { type: 'button', class: 'version' + (v.id === this.state.version ? ' active' : '') + (v.available ? '' : ' disabled') },
         el('b', {}, v.name), el('div', { class: 'tag' }, v.tagline), el('p', {}, v.description),
-        v.available ? null : el('div', { class: 'note' }, v.note));
+        v.available ? null : el('div', { class: 'note' }, v.note), healthRow);
       card.addEventListener('click', () => {
         if (!v.available) return;
         this.state.version = v.id;
@@ -134,7 +148,7 @@ export class Lobby {
     const v = this.version;
     for (const [sel, key] of [['#w-brain', 'brain'], ['#w-mind', 'mind'], ['#w-drama', 'drama'], ['#w-voices', 'voices']]) {
       for (const b of this.$(sel).querySelectorAll('button')) {
-        b.disabled = (b.dataset.v === 'llm' && !llmOk) || (key === 'mind' && b.dataset.v === 'llm' && v && !v.supports_llm);
+        b.disabled = (b.dataset.v === 'llm' && !llmOk) || (key === 'mind' && b.dataset.v === 'llm' && v && (!v.supports_llm || this.mindLLMProblem() !== null));
         b.classList.toggle('active', b.dataset.v === this.state[key]);
       }
     }
@@ -145,6 +159,14 @@ export class Lobby {
       ? 'MindForm reads each experience with its LLM (the path you use in the console).'
       : "MindForm's offline fallbacks: lexicon / trained head appraisal, rule-based voice. Fast, free, cruder.";
     if (!llmOk) this.$('#w-mind-hint').textContent += ' (No API key found: set GEMINI_API_KEY in .env here or in MindForm v0.)';
+    const problem = this.mindLLMProblem();
+    this.$('#w-mind-hint').classList.toggle('bad', !!problem);
+    if (problem) {
+      if (this.state.mind === 'llm') { this.state.mind = 'offline'; this.segs(); return; }
+      this.$('#w-mind-hint').textContent = `MindForm can't use its LLM: ${problem}. Until then it runs on its offline heuristics.`;
+    }
+    const h = this.version?.health;
+    if (h && h.key !== undefined && !h.memory) this.$('#w-mind-hint').textContent += ' Memory recall is off (sentence-transformers missing) — run ./setup.sh.';
     this.$('#w-voices-hint').textContent = this.state.voices === 'styled'
       ? 'MindForm decides how each moment lands; every resident says it in their own words (from their traits and voice). No two residents share a phrase, nobody repeats themselves.'
       : "Residents say MindForm's reply word for word (offline v0 replies are formulaic). For experiments on the raw output.";
