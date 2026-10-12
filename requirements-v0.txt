@@ -1,0 +1,8 @@
+# What MindForm v0 needs at runtime, installed by ./setup.sh into the Python that runs v0
+# (v0's own .venv if it has one, else this repo's .venv; MINDFORM_V0_PYTHON overrides).
+# v0's own requirements.txt pins Linux-only CUDA wheels (nvidia-*, triton) that fail on a Mac;
+# these are the packages it actually imports.
+openai>=1.40
+numpy>=1.26
+torch>=2.2
+sentence-transformers>=3.0

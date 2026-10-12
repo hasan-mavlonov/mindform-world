@@ -66,6 +66,8 @@ SHIFT_COOLDOWN = 16              # beats between two cards for the same resident
 SHIFT_REVERSAL = 2.0             # turning back the other way needs this many times the move...
 REVERSAL_COOLDOWN = 32           # ...and this many beats since that trait's last card
 PASS_DISTANCE = 1.5              # two walkers this close at the same moment cross paths
+PAIR_COOLDOWN = 120              # island minutes before the same two strike up a NEW conversation...
+MAX_STREAK = 3                   # ...after one that ran this many beats in a row (news breaks the cooldown)
 LINES_KEEP = 24
 PALETTE = ["#f4a6c8", "#ffb565", "#84cffa", "#acf2a9", "#d7b4ff", "#ffe08a",
            "#7fe0d4", "#ff9b8a", "#b9c7ff", "#f6c6a0"]
@@ -286,6 +288,8 @@ class World:
         self.recent_outcomes: list[str] = []
         self.letters_sent: list[list[str]] = []
         self.highlights: list[dict] = []          # today's dramatic moments (for the recap card)
+        self.pair_log: dict[str, dict] = {}       # "a|b" -> {"beat", "t", "streak"}: when two last talked
+        self.mind_health: dict = {"llm": None, "memory": None}   # why MindForm is degraded, if it is
         self.residents: dict[str, Resident] = {}
         self.feed: deque = deque(maxlen=FEED_KEEP)
         self.feed_seq = 0
@@ -375,6 +379,7 @@ class World:
         try:
             self.mind = make_mind(self.setup["version"], self.dir / "minds", self.mind_llm)
             self.mind.start()
+            self.check_mind()
             for index, spec in enumerate(characters[:MAX_RESIDENTS]):
                 label = (spec.get("identity") or {}).get("name") or (spec.get("bio") or "")[:40]
                 self.progress = {"done": index, "total": len(characters), "current": label}
@@ -674,8 +679,11 @@ class World:
         for o in self.residents.values():
             if o.id == r.id or o.asleep:
                 continue
+            log_ = self.pair_log.get(self._pair_key(r.id, o.id))
             people.append({"id": o.id, "name": o.name, "place": o.place, "place_name": self.place_name(o.place),
-                           "here": o.place == r.place, "doing": o.doing})
+                           "here": o.place == r.place, "doing": o.doing,
+                           "talked_minutes_ago": self.clock - log_["t"] if log_ else None,
+                           "cooldown": self._pair_state(r, o) == "cooldown"})
         elsewhere = {}
         for pid in LOCATIONS:
             if pid != r.place:
@@ -790,6 +798,18 @@ class World:
                 dest[r.id] = r.place
                 actions[r.id] = {**a, "type": "rest"}
 
+        # The same two don't strike up conversation after conversation: a talk can run a few
+        # beats in a row, then they leave each other be for a while unless one has news.
+        pair_state = {}
+        for rid, target in list(talk.items()):
+            state = self._pair_state(R[rid], R[target])
+            pair_state[rid] = state
+            if state == "cooldown":
+                talk.pop(rid)
+                dest[rid] = R[rid].place
+                actions[rid] = {"type": "rest", "intent": f"leaves {R[target].name} be for now",
+                                "source": actions[rid].get("source", "")}
+
         # Break talk cycles: in A<->B keep the more sociable one as the speaker; the other
         # just listens where they are.
         for rid in sorted(talk):
@@ -839,9 +859,11 @@ class World:
             rng.shuffle(ids)
             while len(ids) >= 2:
                 a, b = ids.pop(), ids.pop()
-                if rng.random() < self._encounter_chance(R[a], R[b]):
+                state = self._pair_state(R[a], R[b])
+                if state != "cooldown" and rng.random() < self._encounter_chance(R[a], R[b]):
                     speaker, listener = self._who_speaks(R[a], R[b], rng)
                     talk[speaker] = listener
+                    pair_state[speaker] = state
                     encounter.add(speaker)
                     engaged |= {a, b}
         movers = sorted(r.id for r in awake if r.id not in engaged and dest[r.id] != start[r.id])
@@ -850,7 +872,8 @@ class World:
                 if a in engaged or b in engaged:
                     continue
                 at = crossing(paths[a], paths[b])
-                if at is not None and rng.random() < 0.2 + 0.8 * self._encounter_chance(R[a], R[b]):
+                if (at is not None and self._pair_state(R[a], R[b]) in ("fresh", "continuing")
+                        and rng.random() < 0.2 + 0.8 * self._encounter_chance(R[a], R[b])):
                     speaker, listener = self._who_speaks(R[a], R[b], rng)
                     talk[speaker] = listener
                     passing[speaker] = at
@@ -864,10 +887,33 @@ class World:
             elif self.voice_mode == "mind":                  # MindForm's own words: no world-written topics
                 topics[rid] = {"intent": "small"}
             else:
-                topics[rid] = intrigue.choose_topic(R[rid], R[target], self, topic_rng)
+                only = intrigue.NEWS if pair_state.get(rid) == "news" else None
+                topics[rid] = intrigue.choose_topic(R[rid], R[target], self, topic_rng, only=only)
         return {"actions": actions, "awake": [r.id for r in awake], "start": start, "dest": dest, "talk": talk,
                 "brushoff": brushoff, "encounter": encounter, "passing": passing, "paths": paths,
                 "topics": topics, "lines": {}}
+
+    @staticmethod
+    def _pair_key(a: str, b: str) -> str:
+        return "|".join(sorted((a, b)))
+
+    def _pair_state(self, a: Resident, b: Resident) -> str:
+        """'fresh' (free to talk), 'continuing' (mid-conversation), 'news' (on cooldown, but one
+        has something new to say) or 'cooldown' (they just talked; leave it)."""
+        log_ = self.pair_log.get(self._pair_key(a.id, b.id))
+        if not log_:
+            return "fresh"
+        if log_["beat"] == self.beat - 1 and log_["streak"] < MAX_STREAK:
+            return "continuing"
+        if log_["beat"] == self.beat - 1 or self.clock - log_["t"] < PAIR_COOLDOWN:
+            return "news" if intrigue.has_news(a, b, self, log_["t"]) else "cooldown"
+        return "fresh"
+
+    def _log_pair(self, a: str, b: str) -> None:
+        key = self._pair_key(a, b)
+        prev = self.pair_log.get(key)
+        streak = prev["streak"] + 1 if prev and prev["beat"] == self.beat - 1 else 1
+        self.pair_log[key] = {"beat": self.beat, "t": self.clock, "streak": streak}
 
     def _sociability(self, r: Resident) -> float:
         t = intrigue.trait_dict(r.state)
@@ -1225,6 +1271,7 @@ class World:
             topic = topics.get(rid) or {"intent": "small"}
             intent = topic["intent"]
             R[rid].pair_topics = {**R[rid].pair_topics, target: intent}
+            self._log_pair(rid, target)
             drama = 3 if intent in ("confide", "confront") else 2 if (rid in brushoff or intent == "gossip") else 0
             self.emit("say", lines[rid][0], actor=rid, to=target, to_name=R[target].name, source=lines[rid][1],
                       brushoff=rid in brushoff, intent=intent, passing=rid in passing, at=passing.get(rid),
@@ -1493,6 +1540,35 @@ class World:
                 self._settle(rid, items, text, narr_source, turn, error, plan,
                              spoken=spoken, voice_source=voice_source, role=role)
 
+    def check_mind(self) -> None:
+        """After the mind starts: is anything missing that MindForm needs (memory recall)?"""
+        if self.setup.get("version") != "mindform_v0":
+            return
+        from app.minds import mindform_v0
+        h = mindform_v0.health()
+        if h and not h.get("memory"):
+            self.mind_health["memory"] = ("sentence-transformers isn't installed in the Python that runs MindForm "
+                                          f"({h.get('python')}), so memory recall is off. Run ./setup.sh and restart.")
+
+    def _watch_mind(self, r: Resident, turn) -> None:
+        """Under the lock: an LLM-mode mind that quietly fell back to its heuristics is an error
+        the user must see (with v0's own reason), not a silent downgrade."""
+        sources = (turn.state or {}).get("sources") or {}
+        appraisal = sources.get("appraisal")
+        if not self.mind_llm or appraisal is None:
+            return
+        if appraisal == "offline":
+            diag = self.mind.diagnose() if hasattr(self.mind, "diagnose") else {}
+            reason = diag.get("llm") or "its LLM calls are failing"
+            if self.mind_health.get("llm") != reason:
+                self.mind_health["llm"] = reason
+                self.emit("system", f"⚠ MindForm fell back to its offline heuristics: {reason}.", actor=r.id, alert=True)
+            if diag.get("memory") and not self.mind_health.get("memory"):
+                self.mind_health["memory"] = diag["memory"]
+        elif self.mind_health.get("llm"):
+            self.mind_health["llm"] = None
+            self.emit("system", "MindForm is reading experiences with its LLM again.", actor=r.id)
+
     def _experience(self, r: Resident, text: str):
         """One MindForm turn, retried once (the adapter restarts a dead mind process)."""
         error = None
@@ -1522,6 +1598,7 @@ class World:
                 r.state = turn.state or r.state
                 r.reply = turn.reply
                 r.last_appraisal = appraisal
+                self._watch_mind(r, turn)
             heard_from = [s for s in addressed_by.get(rid, []) if s not in brushoff]
             leaving_from = [s for s in addressed_by.get(rid, []) if s in brushoff]
             self.emit("experience", text, actor=rid, source=narr_source,
@@ -1792,7 +1869,9 @@ class World:
                 "setup": {k: self.setup.get(k) for k in ("version", "world_brain", "mind_llm", "seed",
                                                          "experiences_per_hour", "intensity")}
                          | {"version_name": version_name(self.setup.get("version", "")), "voices": self.voice_mode},
-                "llm": {"available": llm.available(), "model": llm.model_label(), **self.stats.snapshot()},
+                "llm": {"available": llm.available(), "model": llm.model_label(), "key_rejected": llm.key_rejected(),
+                        **self.stats.snapshot()},
+                "mind_health": {**self.mind_health, "llm_requested": self.mind_llm},
                 "events": [self._event_public(e) for e in self.events
                            if e["end"] > self.clock and e["start"] - self.clock <= 180 and not e.get("target")],
                 "residents": [r.public(self) for r in self.residents.values()],
@@ -1820,7 +1899,7 @@ class World:
                 "voices": self.voices.to_json(), "weather_hold_until": self.weather_hold_until,
                 "ferry_cancelled_day": self.ferry_cancelled_day, "recent_incidents": self.recent_incidents,
                 "recent_outcomes": self.recent_outcomes, "letters_sent": self.letters_sent,
-                "highlights": self.highlights,
+                "highlights": self.highlights, "pair_log": self.pair_log,
             }
 
     def save(self) -> None:
@@ -1844,6 +1923,7 @@ class World:
         world.recent_outcomes = data.get("recent_outcomes", [])
         world.letters_sent = data.get("letters_sent", [])
         world.highlights = data.get("highlights", [])
+        world.pair_log = data.get("pair_log", {})
         state = data.get("rng")
         if state:
             world.rng.setstate((state[0], tuple(state[1]), state[2]))

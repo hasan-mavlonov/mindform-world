@@ -123,8 +123,14 @@ def describe_context(ctx: dict) -> str:
         else:
             label = LOCATIONS[place]["name"]
         lines.append(f"  {place} ({label}): " + "; ".join(f"{a} ({ACTIVITIES[a]['label']})" for a in acts))
+    def _talked(p):
+        ago = p.get("talked_minutes_ago")
+        if ago is None:
+            return ""
+        return f", talked {ago} min ago" + (" -- don't start another chat with them yet" if p.get("cooldown") else "")
+
     lines.append("People they could talk to: " + ("; ".join(
-        f"{p['name']} (id {p['id']}, at {p['place_name']})" for p in ctx["people"]) or "nobody is around"))
+        f"{p['name']} (id {p['id']}, at {p['place_name']}{_talked(p)})" for p in ctx["people"]) or "nobody is around"))
     return "\n".join(lines)
 
 
@@ -293,7 +299,9 @@ def plan_rules(ctx: dict, rng: random.Random) -> dict:
         s = 1.0 + 2.0 * rel_need + 1.0 * E + 1.2 * lean + 1.5 * aff
         s += 1.0 if person["here"] else -0.3
         if person["id"] in talking:
-            s += 2.5 - 0.6 * ctx["conversation_len"]
+            s += 2.5 - 0.6 * ctx["conversation_len"] - (3.0 if ctx["conversation_len"] >= 3 else 0.0)
+        elif person.get("cooldown"):
+            s -= 3.5                                  # they just talked: leave it unless there's news
         elif not rel.get("talks"):
             s += 0.3 * (O + A) + 0.4                 # curiosity about someone new
         if in_hours and job["place"] and not person["here"]:

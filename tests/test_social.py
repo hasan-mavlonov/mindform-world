@@ -453,3 +453,100 @@ def test_rules_offline_is_still_reproducible(tmp_path):
         finally:
             m.shutdown()
     assert runs[0] == runs[1]
+
+
+# --- the same two don't greet each other every 15 minutes -------------------------------------
+def _talk(world, a, b):
+    plan = _force(world, {a: {"type": "talk", "person": b, "say": ""}})
+    world.beat += 1
+    world.clock += world.beat_minutes
+    return plan
+
+
+def test_a_conversation_runs_a_few_beats_then_cools_down(manager):
+    world = drama_world(manager)
+    world.residents["leo"].place = world.residents["aya"].place = "cafe"
+    for _ in range(3):                                           # opener + two more beats in a row
+        assert _talk(world, "leo", "aya")["talk"] == {"leo": "aya"}
+    plan = _talk(world, "leo", "aya")                            # a fourth: they leave it
+    assert plan["talk"] == {} and "leaves Aya be" in plan["actions"]["leo"]["intent"]
+    world.clock += 120                                           # two island hours later: fine again
+    assert _talk(world, "leo", "aya")["talk"] == {"leo": "aya"}
+
+
+def test_no_new_small_talk_right_after_a_chat(manager):
+    world = drama_world(manager)
+    world.residents["leo"].place = world.residents["aya"].place = "cafe"
+    _talk(world, "leo", "aya")
+    _force(world, {})                                            # a beat apart: the conversation ended
+    world.beat += 1
+    world.clock += world.beat_minutes
+    assert _talk(world, "leo", "aya")["talk"] == {}
+
+
+def test_news_breaks_the_cooldown(manager):
+    world = drama_world(manager)
+    leo, aya = world.residents["leo"], world.residents["aya"]
+    leo.place = aya.place = "cafe"
+    _talk(world, "leo", "aya")
+    _force(world, {})
+    world.beat += 1
+    world.clock += world.beat_minutes
+    intrigue.learn(leo, "rex", "Rex came out of the boatyard long after closing, sawdust on his sleeves.",
+                   t=world.clock, src="saw", clue=True)
+    plan = _talk(world, "leo", "aya")
+    assert plan["talk"] == {"leo": "aya"} and plan["topics"]["leo"]["intent"] in intrigue.NEWS
+
+
+def test_bumping_into_each_other_again_doesnt_restart_the_chat(manager, monkeypatch):
+    world = drama_world(manager)
+    monkeypatch.setattr(World, "_encounter_chance", lambda self, a, b: 1.0)
+    for rid in ("leo", "aya"):
+        world.residents[rid].place = "cafe"
+    _talk(world, "leo", "aya")
+    _force(world, {"aya": {"type": "home"}})                     # she heads home for a bit
+    world.beat += 1
+    world.clock += world.beat_minutes
+    plan = _force(world, {"leo": {"type": "do", "activity": "cafe.coffee"}, "aya": {"type": "do", "activity": "cafe.coffee"}})
+    assert plan["talk"] == {}                                    # back at the café 30 min later: no new chat
+
+
+def test_over_a_day_no_pair_loops(manager):
+    world = drama_world(manager)
+    for _ in range(64):
+        world.run_beat()
+    starts, beats = {}, {}
+    for it in world.feed:
+        if it["kind"] != "say" or it.get("answer") or it.get("closing") or it.get("react") or not it.get("to"):
+            continue
+        pair = tuple(sorted((it["actor"], it["to"])))
+        beats.setdefault(pair, []).append((it["t"], it.get("intent")))
+    for pair, talks in beats.items():
+        run, prev_t = 1, None
+        for t, intent in talks:
+            if prev_t is not None and t - prev_t == world.beat_minutes:
+                run += 1
+                assert run <= 3 or intent in intrigue.NEWS, (pair, t)
+            elif prev_t is not None and t != prev_t:
+                assert t - prev_t >= 120 or intent in intrigue.NEWS or prev_t // 1440 != t // 1440, (pair, t, intent)
+                run = 1
+            prev_t = t
+
+
+def test_a_rejected_key_is_reported_not_retried(keyed):
+    calls = {"n": 0}
+
+    def bad_key(url, json=None, headers=None, timeout=None):
+        calls["n"] += 1
+        return httpx.Response(400, json={"error": {"message": "API key not valid. Please pass a valid API key."}},
+                              request=httpx.Request("POST", url))
+
+    keyed.setattr(llm.httpx, "post", bad_key)
+    llm._auth_blocked_until.clear()
+    with pytest.raises(httpx.HTTPStatusError):
+        llm.complete_json("s", "u")
+    assert calls["n"] == 1 and llm.key_rejected()                 # said once, then on hold: the UI shows it
+    with pytest.raises(llm.LLMUnavailable):
+        llm.complete_json("s", "u")
+    assert calls["n"] == 1
+    llm._auth_blocked_until.clear()

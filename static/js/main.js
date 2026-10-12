@@ -124,6 +124,17 @@ function apply(s) {
     $('#creating-text').textContent = p.total ? `${p.current || '…'} (${Math.min(p.done + 1, p.total)}/${p.total})` : 'Starting the mind…';
   }
   if (s.status === 'error' || s.error) showError(s.error || 'The world hit an error.');
+  const mh = s.mind_health || {};
+  const banner = $('#mind-banner');
+  const worldKey = s.setup.world_brain === 'llm' && s.llm.key_rejected;
+  banner.replaceChildren(...[
+    mh.llm ? el('div', { class: 'bad' }, el('b', {}, '⚠ MindForm is running on its offline heuristics'), ` — ${mh.llm}.`) : null,
+    worldKey ? el('div', { class: 'bad' }, el('b', {}, "⚠ The world's LLM key was rejected"),
+      ' — planning, narration and voices use rules until it works. Check GEMINI_API_KEY in .env.') : null,
+    mh.memory ? el('div', { class: 'warn' }, el('b', {}, 'Memory recall is off'), ` — ${mh.memory}`) : null,
+  ].filter(Boolean));
+  banner.classList.toggle('hidden', !banner.children.length);
+  document.body.classList.toggle('mind-alert', banner.children.length > 0);
   // controls
   $('#c-play').textContent = s.running ? '❚❚ Pause' : '▶ Play';
   $('#c-play').disabled = s.status !== 'ready';
@@ -280,6 +291,7 @@ const show = { queue: [], nextAt: 0, waitingSince: 0 };
 
 function ingestFeed(items) {
   for (const it of items) {
+    if (it.kind === 'system' && it.alert && !app.first) toast('MindForm', it.text);
     if (app.first || !PRESENT.has(it.kind) || (it.kind === 'outcome' && !it.notable)) addStory(it);   // backlog + quiet facts
     else show.queue.push(it);
   }
