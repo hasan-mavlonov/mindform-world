@@ -376,21 +376,75 @@ def test_circuit_opens_then_recovers(keyed):
     assert llm.complete_json("s", "u") == {"ok": True}
 
 
-def test_mind_hiccup_is_retried(manager, monkeypatch):
+def test_a_failing_mind_is_shown_and_the_island_keeps_going(manager, monkeypatch):
+    """Mind calls that still fail (after the adapter's own retries) don't freeze the sim: the
+    beat finishes, ONE alert names who missed it, the banner shows it, and it clears once a
+    beat goes through again."""
+    from app.minds.base import MindError
     world = drama_world(manager)
     real = world.mind.experience
-    calls = {"n": 0}
 
-    def flaky(ref, text):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise RuntimeError("mind process restarting")
-        return real(ref, text)
+    def down(ref, text):
+        raise MindError("MindForm v0 unreachable after 3 tries: Server disconnected without sending a response")
 
-    monkeypatch.setattr(world.mind, "experience", flaky)
-    monkeypatch.setattr("app.world.engine.time.sleep", lambda s: None)
-    turn, error = world._experience(world.residents["aya"], "I sat by the fountain.")
-    assert turn is not None and error is None
+    monkeypatch.setattr(world.mind, "experience", down)
+    clock = world.clock
+    for _ in range(2):
+        assert world.run_beat()
+    assert world.clock == clock + 2 * world.beat_minutes          # time went on
+    calls = world.public_state()["mind_health"]["calls"]
+    assert calls["failed"] == calls["of"] == len(world.residents) and calls["beats"] == 2
+    assert "unreachable" in calls["error"]
+    alerts = [i for i in world.feed if i["kind"] == "system" and i.get("alert") and "couldn't take" in i["text"]]
+    assert len(alerts) == 1                                      # one alert, not one per resident per beat
+    assert all(r.mood is None or r.mood.get("t", 0) < clock for r in world.residents.values())
+    monkeypatch.setattr(world.mind, "experience", real)          # the mind is back
+    assert world.run_beat()
+    assert world.public_state()["mind_health"]["calls"] is None
+    assert any("answering again" in i["text"] for i in world.feed if i["kind"] == "system")
+
+
+def test_mid_conversation_with_nothing_new_they_let_it_rest(manager):
+    """'Leo! Hi! Bye! Busy!' every beat: a pair already talking never opens with another hello.
+    With nothing new to follow up with, the talk rests instead."""
+    world = drama_world(manager)
+    world.residents["leo"].place = world.residents["aya"].place = "cafe"
+    first = _talk(world, "leo", "aya")
+    assert first["talk"] == {"leo": "aya"}
+    again = _talk(world, "leo", "aya")
+    if again["talk"]:
+        assert again["topics"]["leo"]["intent"] in intrigue.FOLLOW_UP
+        assert again["topics"]["leo"]["intent"] not in intrigue.GREETINGS
+    else:
+        assert "lets the talk with Aya rest" in again["actions"]["leo"]["intent"]
+
+
+def test_a_planner_hello_is_dropped_mid_conversation(manager):
+    world = drama_world(manager)
+    leo = world.residents["leo"]
+    leo.place = world.residents["aya"].place = "cafe"
+    leo.last_outcome = "fixed the café sign"
+    _talk(world, "leo", "aya")
+    plan = _force(world, {"leo": {"type": "talk", "person": "aya", "say": "Aya! Hi! Bye! Busy!"}})
+    line = plan["lines"].get("leo", ("", ""))[0] if plan.get("lines") else ""
+    assert plan["talk"] == {} or not voice.is_greeting(line, "Aya"), line
+
+
+def test_paths_crossing_again_dont_greet_again(manager, monkeypatch):
+    """A passing hello needs a pair that hasn't just talked."""
+    world = drama_world(manager)
+    monkeypatch.setattr(World, "_encounter_chance", lambda self, a, b: 1.0)
+    monkeypatch.setattr("app.world.engine.crossing", lambda a, b: 0.5)       # their paths always cross
+    leo, aya = world.residents["leo"], world.residents["aya"]
+    leo.place, aya.place = "cafe", "library"
+    moves = {"leo": {"type": "go", "place": "market"}, "aya": {"type": "go", "place": "clinic"}}
+    first = _force(world, moves)
+    assert first["passing"]                                      # they greet in passing once
+    world.beat += 1
+    world.clock += world.beat_minutes
+    leo.place, aya.place = "market", "clinic"
+    again = _force(world, {"leo": {"type": "go", "place": "cafe"}, "aya": {"type": "go", "place": "library"}})
+    assert not again["passing"] and again["talk"] == {}          # crossing again 15 min later: no second hello
 
 
 def test_a_failed_beat_does_not_stop_the_show(manager, monkeypatch):
@@ -465,9 +519,13 @@ def _talk(world, a, b):
 
 def test_a_conversation_runs_a_few_beats_then_cools_down(manager):
     world = drama_world(manager)
-    world.residents["leo"].place = world.residents["aya"].place = "cafe"
-    for _ in range(3):                                           # opener + two more beats in a row
-        assert _talk(world, "leo", "aya")["talk"] == {"leo": "aya"}
+    leo = world.residents["leo"]
+    leo.place = world.residents["aya"].place = "cafe"
+    leo.last_outcome = "fixed the café sign"                     # things to follow up with
+    leo.relationships["aya"] = {**intrigue.new_rel(), "trust": 0.6}
+    plans = [_talk(world, "leo", "aya") for _ in range(3)]       # opener + two more beats in a row
+    assert all(p["talk"] == {"leo": "aya"} for p in plans)
+    assert all(p["topics"]["leo"]["intent"] in intrigue.FOLLOW_UP for p in plans[1:])   # no second hello
     plan = _talk(world, "leo", "aya")                            # a fourth: they leave it
     assert plan["talk"] == {} and "leaves Aya be" in plan["actions"]["leo"]["intent"]
     world.clock += 120                                           # two island hours later: fine again

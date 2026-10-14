@@ -146,15 +146,21 @@ class WorldManager:
             world = World.load(wdir)
             self.worlds[wid] = world
         if world.status == "ready":
-            from app.minds import make_mind
-            world.mind = make_mind(world.setup["version"], wdir / "minds", world.mind_llm)
-            try:
-                world.mind.start()
-                world.check_mind()
-            except Exception as exc:
-                world.status, world.error = "error", f"could not start the mind: {exc}"
+            # In the background (it takes a few seconds: the encoder warms up first); every beat
+            # waits for its readiness check, so the island never runs ahead of its minds.
+            threading.Thread(target=self._boot, args=(world,), name=f"boot-{wid}", daemon=True).start()
+        else:
+            world.mind_ready.set()
         world.start_loop()
         return world
+
+    @staticmethod
+    def _boot(world: World) -> None:
+        try:
+            world.boot_mind()
+        except Exception as exc:
+            log.exception("could not start the mind of %s", world.id)
+            world.status, world.error = "error", f"could not start the mind: {exc}"
 
     def list(self) -> list[dict]:
         out = []

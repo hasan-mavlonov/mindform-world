@@ -51,8 +51,25 @@ After that, `./run.sh` only checks; it installs again only if something goes mis
   `triton`) that fail on a Mac. When they fail, `sentence-transformers` never gets installed,
   and v0's memory recall silently turns off ("No module named 'sentence_transformers'").
 - **No MindForm code is copied in.** For each world, MindForm World starts MindForm v0's own
-  cockpit server (`console.py`) as a separate process. It runs inside the world's own folder,
-  so every world has its own roster, memories and logs. Your console characters are never touched.
+  cockpit server as a separate process. It runs inside the world's own folder, so every world
+  has its own roster, memories and logs. Your console characters are never touched.
+- **One MindForm server per world, warm before Day 1.** The server is launched through
+  `app/minds/v0_boot.py`, which runs in v0's Python and changes none of v0's code. Before the
+  server starts listening, it:
+  - loads the memory encoder (MiniLM) once, on the CPU (MPS plus parallel requests is what
+    froze the first turn on a Mac);
+  - sets `TOKENIZERS_PARALLELISM=false`, lets only one `encode()` run at a time, and turns
+    off the "Batches: 0%" bars;
+  - warms the encoder up with a dummy encode;
+  - after the first download, loads the model from the local Hugging Face cache
+    (`HF_HUB_OFFLINE=1`), so startup never calls huggingface.co.
+
+  The world waits for the server's readiness check before any beat. Every resident shares
+  that one server. If it dies, exactly one restart replaces it, however many turns were in
+  flight. A console exits by itself when its world server goes away (for example on a
+  `--reload`), and a world that starts again stops one left behind. The log line
+  `[world-boot] memory encoder ready on cpu (local cache) in 5.9s` in
+  `data/worlds/<id>/minds/mindform_v0.log` says it worked.
 - **v0 runs on v0's own Python** (`mindform_v0/.venv` if it exists, else this repo's `.venv`;
   `MINDFORM_V0_PYTHON` overrides).
 - **One key powers both.** `GEMINI_API_KEY` in this repo's `.env` is loaded at startup and
@@ -255,7 +272,10 @@ Now each resident says MindForm's reading in their own way.
     two don't start another for 2 island hours, unless one has real news: gossip, a secret to
     confront, a suspicion, or a big event since they last spoke.
     - The planners see this ("talked 15 min ago").
-    - Bumping into each other or crossing paths respects it too.
+    - Bumping into each other or crossing paths respects it too: a hello in passing ("Morning,
+      Aya!") only happens between two who haven't talked in the last 2 hours.
+    - A conversation that is already running never opens with another hello. Its next beats
+      follow up (news, gossip, a goal, a worry), or they let it rest.
 - **Gossip.** Residents pass on what they know about each other: things they saw, rumors,
   secrets they heard.
 - **Secrets** shape what a resident does and thinks:
@@ -346,7 +366,15 @@ starts with them waking up.
   - After repeated failures the LLM is skipped for 45 seconds and every call uses its rules
     straight away.
   - A rejected key pauses LLM calls for 5 minutes.
-  - A failed MindForm turn is retried once (the v0 process is restarted if it died).
+  - **MindForm turns** time out after 120 s in LLM mode (45 s offline; `MINDFORM_TURN_TIMEOUT`
+    overrides). They are retried twice with backoff, and a turn is never applied twice: before
+    resending, the world checks v0's turn counter.
+    - If v0 crashed, it is restarted, once.
+    - If it stopped answering, it is replaced.
+    - If it is just slow (its LLM provider), it is left alone, because a restart would cut off
+      everyone's turn.
+    - If a turn still fails, the island keeps going: that resident misses this beat's reading,
+      and one alert plus a red banner name who and why. The banner clears on the next good beat.
   - A beat that fails is skipped; the simulation only pauses if three beats fail in a row.
   - Outside creator mode, the top bar shows how many calls failed and why.
 
@@ -357,7 +385,7 @@ app/
   main.py              HTTP API + the page
   config.py            settings (env > .env > MindForm v0's .env for the LLM key)
   llm.py               the world's OpenAI-compatible JSON call (httpx, no SDK)
-  minds/               mind versions: base contract, mindform_v0 (subprocess adapter), control
+  minds/               mind versions: base contract, mindform_v0 (subprocess adapter + v0_boot.py launcher), control
   world/
     places.py          Halcyon Isle: places, activities + outcomes, jobs, homes, roads
     director.py        weather, ferry, community events, incidents, letters (+ LLM director)

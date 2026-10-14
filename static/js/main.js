@@ -114,8 +114,9 @@ function apply(s) {
     toast('World LLM failing', `${s.llm.last_error || 'error'} -- planning and narration fall back to rules. Check the API key.`);
   }
   const phase = $('#badge-phase');
-  phase.textContent = s.status === 'creating' ? 'creating' : s.busy ? s.phase : (s.running ? 'running' : 'paused');
-  phase.classList.toggle('busy', s.busy || s.status === 'creating');
+  const waking = s.status === 'ready' && s.mind_ready === false;
+  phase.textContent = s.status === 'creating' ? 'creating' : waking ? 'waking the minds' : s.busy ? s.phase : (s.running ? 'running' : 'paused');
+  phase.classList.toggle('busy', s.busy || waking || s.status === 'creating');
   $('#record-badge').replaceChildren(el('b', {}, s.name), el('small', {}, `Day ${s.day} · ${pad(s.hour)}:${pad(s.minute)} · ${s.weather_text}`));
   // creating / errors
   $('#creating').classList.toggle('hidden', s.status !== 'creating');
@@ -128,6 +129,8 @@ function apply(s) {
   const banner = $('#mind-banner');
   const worldKey = s.setup.world_brain === 'llm' && s.llm.key_rejected;
   banner.replaceChildren(...[
+    mh.calls ? el('div', { class: 'bad' }, el('b', {}, `⚠ MindForm couldn't take ${mh.calls.failed} of ${mh.calls.of} experiences at ${mh.calls.time_text}`),
+      ` (${mh.calls.names.join(', ')}) — ${mh.calls.error}. The island keeps running; this clears when a beat goes through.`) : null,
     mh.llm ? el('div', { class: 'bad' }, el('b', {}, '⚠ MindForm is running on its offline heuristics'), ` — ${mh.llm}.`) : null,
     worldKey ? el('div', { class: 'bad' }, el('b', {}, "⚠ The world's LLM key was rejected"),
       ' — planning, narration and voices use rules until it works. Check GEMINI_API_KEY in .env.') : null,

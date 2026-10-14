@@ -38,7 +38,7 @@ from app.world.manager import SetupError, WorldManager
 from app.world.places import public_map
 
 ROOT = Path(__file__).resolve().parent.parent
-APP_VERSION = "0.4.1"        # bump when client + API change together: open pages reload themselves
+APP_VERSION = "0.4.2"        # bump when client + API change together: open pages reload themselves
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("mindform.world.app")
 
