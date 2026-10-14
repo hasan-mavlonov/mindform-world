@@ -710,6 +710,18 @@ def near_duplicate(line: str, recent: list[str]) -> bool:
     return _max_similarity(line, recent) >= SIMILAR
 
 
+_GREETING = re.compile(r"^(?:oh,?\s+|well,?\s+)?(?:hi|hey|hello|hiya|howdy|oi|yo|morning|evening|afternoon|"
+                       r"good (?:morning|afternoon|evening|day)|look who it is|there you are)\b", re.I)
+
+
+def is_greeting(line: str, to: str = "") -> bool:
+    """'Hi! Bye! Busy!', 'Aya! Morning!', 'Oh, hello there' -- a line that only says hello."""
+    text = (line or "").strip().lstrip("\"'“‘")
+    if to and text.lower().startswith(to.lower()):
+        text = text[len(to):].lstrip(" ,!.—-")
+    return bool(_GREETING.match(text))
+
+
 def shares_run(line: str, others: list[str], *, names: set | None = None, run: int = SHARED_RUN,
                ignore: list[str] | tuple = ()) -> bool:
     """Whether ``line`` shares a run of ``run`` words with any line in ``others``. Names and the

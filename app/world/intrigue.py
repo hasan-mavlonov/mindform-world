@@ -344,6 +344,9 @@ def knows_secret(r, holder) -> bool:
 
 # ---- what to talk about ----------------------------------------------------------------------------
 NEWS = {"gossip", "confront", "probe", "confide", "event"}      # worth breaking a pair's cooldown for
+GREETINGS = {"small", "warm", "cool", "pass"}                 # openers that greet: "Morning, Aya!", "There you are!"
+FOLLOW_UP = {"gossip", "confront", "probe", "confide", "event", "goal", "comfort", "outcome", "weather", "ally"}
+# ^ what a pair already mid-conversation can bring up next beat: never another hello
 
 
 def has_news(speaker, listener, world, since: int) -> bool:
@@ -367,7 +370,8 @@ def choose_topic(speaker, listener, world, rng: random.Random, *, only: set | No
     """The world's pick of what an opening line is about. Returns
     {"intent": open|gossip|confide|confront|probe|goal|comfort|event|outcome|weather|warm|cool,
      ...slot data}. The mind supplies the feeling; this only supplies the subject. ``only``
-    limits it to those intents (a pair that just talked only starts again for news)."""
+    limits it to those intents (a pair that just talked only starts again for news; one mid-
+    conversation only follows up, never greets again) -- None if none of them fits."""
     rel = normalize_rel(speaker.relationships.setdefault(listener.id, new_rel()))
     traits = trait_dict(speaker.state)
     E, A, N = traits["E"], traits["A"], traits["N"]
@@ -411,7 +415,7 @@ def choose_topic(speaker, listener, world, rng: random.Random, *, only: set | No
         add(0.8, {"intent": "cool"})
     add(0.6, {"intent": "small"})
     if not options:
-        return {"intent": "small"}
+        return {"intent": "small"} if only is None else None      # limited and nothing fits: nothing to say
     return rng.choices([t for _, t in options], weights=[w for w, _ in options])[0]
 
 

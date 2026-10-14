@@ -44,7 +44,7 @@ from app.world import director, intrigue, narrator, planner, presets, recap
 from app.world.emotion import HEADLINE_THRESHOLD, SHOW_THRESHOLD, read_emotion
 from app.world.places import (ACTIVITIES, ACTIVITY_TOPIC, ISLAND_NAME, JOBS, LOCATIONS, activity_place,
                               available_activities, doing_text, home_id, home_slot, path_between)
-from app.world.voice import RECENT_LINES, VoiceBook, llm_line, near_duplicate, shares_run
+from app.world.voice import RECENT_LINES, VoiceBook, is_greeting, llm_line, near_duplicate, shares_run
 
 log = logging.getLogger("mindform.world")
 
@@ -54,6 +54,7 @@ MAX_RESIDENTS = 10
 FEED_KEEP = 800
 BASE_BEAT_SECONDS = 7.0          # shortest beat at 1x (real seconds)
 WALK_SECONDS = 6.0               # at 1x, each beat opens with ~6 s of walking before anyone speaks
+MIND_BOOT_WAIT = 300.0           # a beat waits this long for the mind server's readiness check
 WALK_SPEED = 2.4                 # world units per second at 1x (the client walks at the same pace)
 # Watchable pacing: every "headline" (a line said, an event, a strong emotion, a bond) gets this
 # many seconds on screen at 1x; the beat waits for its headlines before the next one runs.
@@ -289,7 +290,8 @@ class World:
         self.letters_sent: list[list[str]] = []
         self.highlights: list[dict] = []          # today's dramatic moments (for the recap card)
         self.pair_log: dict[str, dict] = {}       # "a|b" -> {"beat", "t", "streak"}: when two last talked
-        self.mind_health: dict = {"llm": None, "memory": None}   # why MindForm is degraded, if it is
+        self.mind_health: dict = {"llm": None, "memory": None, "calls": None}   # why MindForm is degraded, if it is
+        self.mind_ready = threading.Event()       # set once the mind server passed its readiness check
         self.residents: dict[str, Resident] = {}
         self.feed: deque = deque(maxlen=FEED_KEEP)
         self.feed_seq = 0
@@ -377,9 +379,8 @@ class World:
         """Birth the cast through the mind (runs in a background thread)."""
         self.status, self.phase = "creating", "creating residents"
         try:
-            self.mind = make_mind(self.setup["version"], self.dir / "minds", self.mind_llm)
-            self.mind.start()
-            self.check_mind()
+            self.boot_mind()
+            self.status, self.phase = "creating", "creating residents"
             for index, spec in enumerate(characters[:MAX_RESIDENTS]):
                 label = (spec.get("identity") or {}).get("name") or (spec.get("bio") or "")[:40]
                 self.progress = {"done": index, "total": len(characters), "current": label}
@@ -396,6 +397,21 @@ class World:
             log.exception("world creation failed")
             self.status, self.phase, self.error = "error", "idle", str(exc)
             self.emit("system", f"Creation failed: {exc}")
+
+    def boot_mind(self) -> None:
+        """Start this world's ONE mind server and wait for its readiness check -- MindForm v0
+        answers it only once its memory encoder is loaded and warm. No beat (Day 1 included)
+        runs before this finishes."""
+        self.mind_ready.clear()
+        self.phase = "waking the minds"
+        try:
+            if self.mind is None:
+                self.mind = make_mind(self.setup["version"], self.dir / "minds", self.mind_llm)
+            self.mind.start()
+            self.check_mind()
+        finally:
+            self.phase = "idle"
+            self.mind_ready.set()
 
     def add_resident(self, spec: dict, index: int) -> Resident:
         assert self.mind is not None
@@ -653,6 +669,10 @@ class World:
 
     # ---- the beat ---------------------------------------------------------------------
     def run_beat(self) -> bool:
+        if self.status not in ("ready", "running"):
+            return False
+        if not self.mind_ready.wait(timeout=MIND_BOOT_WAIT):     # the mind server is still starting
+            return False
         with self.lock:
             if self.busy or self.status not in ("ready", "running"):
                 return False
@@ -872,7 +892,9 @@ class World:
                 if a in engaged or b in engaged:
                     continue
                 at = crossing(paths[a], paths[b])
-                if (at is not None and self._pair_state(R[a], R[b]) in ("fresh", "continuing")
+                # A passing hello ("Morning, Aya!") only between two who haven't just talked: no
+                # "Hi! Bye! Busy!" every beat while their paths keep crossing.
+                if (at is not None and self._pair_state(R[a], R[b]) == "fresh"
                         and rng.random() < 0.2 + 0.8 * self._encounter_chance(R[a], R[b])):
                     speaker, listener = self._who_speaks(R[a], R[b], rng)
                     talk[speaker] = listener
@@ -887,11 +909,18 @@ class World:
             elif self.voice_mode == "mind":                  # MindForm's own words: no world-written topics
                 topics[rid] = {"intent": "small"}
             else:
-                only = intrigue.NEWS if pair_state.get(rid) == "news" else None
-                topics[rid] = intrigue.choose_topic(R[rid], R[target], self, topic_rng, only=only)
+                only = {"news": intrigue.NEWS, "continuing": intrigue.FOLLOW_UP}.get(pair_state.get(rid))
+                topic = intrigue.choose_topic(R[rid], R[target], self, topic_rng, only=only)
+                if topic is None:                            # mid-conversation, nothing new: let it rest
+                    talk.pop(rid)
+                    encounter.discard(rid)
+                    actions[rid] = {"type": "rest", "intent": f"lets the talk with {R[target].name} rest",
+                                    "source": actions[rid].get("source", "")}
+                    continue
+                topics[rid] = topic
         return {"actions": actions, "awake": [r.id for r in awake], "start": start, "dest": dest, "talk": talk,
                 "brushoff": brushoff, "encounter": encounter, "passing": passing, "paths": paths,
-                "topics": topics, "lines": {}}
+                "topics": topics, "lines": {}, "pair_state": pair_state}
 
     @staticmethod
     def _pair_key(a: str, b: str) -> str:
@@ -1037,6 +1066,8 @@ class World:
                     return rid, (planner.continuation(rng), "rules")
                 ctx = {"state": r.state, "events": [self._event_public(e) for e in self.active_events()]}
                 return rid, (planner._opener(ctx, {"name": to.name}, rng), "rules")
+            if say and arr.get("pair_state", {}).get(rid) == "continuing" and is_greeting(say, to.name):
+                say = ""                                    # mid-conversation: no second hello
             if say and intent not in MECHANICAL and not near_duplicate(say, r.said[-RECENT_LINES:]):
                 self._remember(r, say)
                 return rid, (say, actions[rid].get("source", "planner"))
@@ -1528,6 +1559,7 @@ class World:
             return rid, items, text, narr_source, turn, error, spoken, voice_source, role
 
         llm_voices = self.voice_mode == "styled" and self.brain == "llm" and llm.available()
+        outcomes: list[tuple[str, str | None]] = []
         for lv in sorted(by_level):
             members = sorted(by_level[lv])
             with ThreadPoolExecutor(max_workers=max(1, min(8, len(members)))) as pool:
@@ -1539,6 +1571,32 @@ class World:
                 replies[rid] = spoken if spoken is not None else (turn.reply if turn else None)
                 self._settle(rid, items, text, narr_source, turn, error, plan,
                              spoken=spoken, voice_source=voice_source, role=role)
+                outcomes.append((rid, error))
+        with self.lock:
+            self._note_mind_calls(outcomes)
+
+    def _note_mind_calls(self, outcomes: list[tuple[str, str | None]]) -> None:
+        """Under the lock. Mind calls that still failed this beat (after the adapter's retries):
+        one clear alert -- not one per resident -- and a banner until a beat goes through cleanly.
+        The island keeps running either way; those residents just miss this beat's reading."""
+        if not outcomes:
+            return
+        failed = [(rid, error) for rid, error in outcomes if error]
+        before = self.mind_health.get("calls")
+        if failed:
+            names = [self.residents[rid].name for rid, _ in failed]
+            error = failed[0][1].splitlines()[0]                  # the reason; details are in the log
+            self.mind_health["calls"] = {"failed": len(failed), "of": len(outcomes), "names": names, "error": error,
+                                         "time_text": time_text(self.clock),
+                                         "beats": (before or {}).get("beats", 0) + 1}
+            if not before:
+                who = "everyone" if len(failed) == len(outcomes) and len(failed) > 1 else ", ".join(names)
+                self.emit("system", f"⚠ MindForm couldn't take {who}'s experience at {time_text(self.clock)}: {error}. "
+                                    "The island keeps going; they catch up next beat.", alert=True)
+        elif before:
+            self.mind_health["calls"] = None
+            self.emit("system", f"MindForm is answering again ({before['beats']} beat"
+                                f"{'s' if before['beats'] != 1 else ''} had failed mind calls).")
 
     def check_mind(self) -> None:
         """After the mind starts: is anything missing that MindForm needs (memory recall)?"""
@@ -1570,16 +1628,14 @@ class World:
             self.emit("system", "MindForm is reading experiences with its LLM again.", actor=r.id)
 
     def _experience(self, r: Resident, text: str):
-        """One MindForm turn, retried once (the adapter restarts a dead mind process)."""
-        error = None
-        for attempt in range(2):
-            try:
-                return self.mind.experience(r.ref, text), None
-            except Exception as exc:
-                error = str(exc)
-                log.warning("mind turn failed for %s (attempt %d): %s", r.id, attempt + 1, exc)
-                time.sleep(0.5)
-        return None, error
+        """One MindForm turn. The adapter retries it with backoff (never applying it twice) and
+        restarts a crashed mind server; if it still fails, the beat goes on without this
+        mind's reading of it (see _note_mind_calls)."""
+        try:
+            return self.mind.experience(r.ref, text), None
+        except Exception as exc:
+            log.warning("mind turn failed for %s: %s", r.id, exc)
+            return None, str(exc)
 
     def _settle(self, rid, items, text, narr_source, turn, error, plan, *, spoken: str | None = None,
                 voice_source: str | None = None, role: str | None = None) -> None:
@@ -1591,7 +1647,8 @@ class World:
             r.recent = (r.recent + [f"[{time_text(self.clock)}] {text}"])[-12:]
             r.mind_error = error
             if error:
-                self.emit("system", f"{r.name}'s mind could not take this experience: {error}", actor=rid, quiet=True)
+                self.emit("system", f"{r.name}'s mind could not take this experience: {error.splitlines()[0]}",
+                          actor=rid, quiet=True)
             appraisal = turn.appraisal if turn else None
             if turn:
                 r.turns += 1
@@ -1872,6 +1929,7 @@ class World:
                 "llm": {"available": llm.available(), "model": llm.model_label(), "key_rejected": llm.key_rejected(),
                         **self.stats.snapshot()},
                 "mind_health": {**self.mind_health, "llm_requested": self.mind_llm},
+                "mind_ready": self.mind_ready.is_set(),
                 "events": [self._event_public(e) for e in self.events
                            if e["end"] > self.clock and e["start"] - self.clock <= 180 and not e.get("target")],
                 "residents": [r.public(self) for r in self.residents.values()],
